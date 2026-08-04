@@ -1,0 +1,11 @@
+# Build directory and compiled artifacts
+build/*
+!build/.gitkeep
+
+# Object files and assembly outputs
+*.o
+output.asm
+
+# Executables
+dharc
+output

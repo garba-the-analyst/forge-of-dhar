@@ -1,0 +1,6 @@
+task print_status():
+    lock test_msg: str = "Function call successful!"
+    sys 1, 1, test_msg, 26
+
+task core():
+    print_status()

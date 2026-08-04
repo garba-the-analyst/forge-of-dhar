@@ -1,0 +1,41 @@
+task test_memory():
+    flux buffer: raw[1024]
+    flux index: i32 = 0
+    lock val: i32 = 42
+    
+    buffer[index] = val
+    
+    lock mem_msg: str = "[OK] Memory allocation and array indexing passed.\n"
+    sys 1, 1, mem_msg, 50
+
+task test_logic():
+    flux state: i32 = 1
+    flux out: str
+    
+    when state == 1:
+        out = "[OK] Control flow (when) passed.\n"
+        state = state + 1
+    fallback:
+        out = "[FAIL] Control flow (fallback) broke.\n"
+        
+    sys 1, 1, out, 33
+
+    when state == 2:
+        flux loop_count: i32 = 0
+        span loop_count == 0:
+            lock loop_msg: str = "[OK] Loop (span) and Math passed.\n"
+            sys 1, 1, loop_msg, 34
+            loop_count = loop_count + 1
+    fallback:
+        lock fail_msg: str = "[FAIL] Math state failed.\n"
+        sys 1, 1, fail_msg, 26
+
+task core():
+    lock start_msg: str = "--- DHAR V0 FOOLPROOF TEST INITIATED ---\n"
+    sys 1, 1, start_msg, 41
+    
+    test_memory()
+    test_logic()
+    
+    lock end_msg: str = "--- ALL V0 SYSTEMS OPERATIONAL ---\n"
+    sys 1, 1, end_msg, 35

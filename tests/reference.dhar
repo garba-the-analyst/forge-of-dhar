@@ -1,0 +1,33 @@
+task greet():
+    lock msg: str = "Hello from Dhar!\n"
+    sys 1, 1, msg, 17
+
+task calculate():
+    flux state: i32 = 1
+    flux result: str
+    
+    when state == 1:
+        result = "Math logic check: PASS\n"
+        flux temp_buffer: raw[1024]
+        state = state + 1
+    fallback:
+        result = "Math logic check: FAIL\n"
+        flux error_buffer: raw[2048]
+        
+    sys 1, 1, result, 23
+
+task loop_test():
+    flux iter: i32 = 1
+    
+    span iter == 1:
+        lock loop_msg: str = "Loop executed!\n"
+        sys 1, 1, loop_msg, 15
+        iter = iter + 1
+
+task core():
+    greet()
+    calculate()
+    loop_test()
+    
+    lock exit_msg: str = "Done.\n"
+    sys 1, 1, exit_msg, 6
