@@ -1,5 +1,5 @@
 ; ==============================================================================
-; THE FORGE OF DHAR (V0.1.1 ARCHITECTURE)
+; THE FORGE OF DHAR (V0.1.2 ARCHITECTURE)
 ; Final Pre-Bootstrapped x86_64 Native Systems Compiler
 ; Author: Abdullahi Baba Garba (Garba the Analyst)
 ; ==============================================================================
@@ -520,7 +520,7 @@ run_parser:
     jmp .next_token
 
 .check_fallback_stmt:
-    add rcx, 1           ; FIX: 1 skip + the loop's 1 inc = exactly 2 tokens!
+    add rcx, 1                      
     jmp .next_token
 .check_cf_stmt:
     add rcx, 4
@@ -1135,7 +1135,7 @@ run_codegen:
     mov rdx, len_asm_peek_4
     call write_to_file
 
-    add rcx, 6
+    add rcx, 5          ; FIX: Was 6. Prevents off-by-one skip!
     jmp .text_skip
 
 .handle_sysret:
@@ -1158,7 +1158,7 @@ run_codegen:
     mov rdx, len_asm_sysret_2
     call write_to_file
     
-    add rcx, 2
+    add rcx, 1          ; FIX: Was 2. Prevents off-by-one skip!
     jmp .text_skip
 
 .handle_var_decl_cg:
@@ -1393,6 +1393,17 @@ run_codegen:
     
     cmp byte [r13], 5
     je .sys_rdi_lit
+
+    ; --- FIX: Raw Pointer Check ---
+    push r13
+    mov r13, [r13 + 8]
+    call find_symbol
+    pop r13
+    cmp rax, 1
+    jne .sys_rdi_normal
+    cmp byte [rdx + 8], 3      ; Is it a raw[] array?
+    je .sys_rdi_lit            ; If yes, load its bare address!
+.sys_rdi_normal:
     mov rsi, asm_mov_rdi_l
     mov rdx, len_asm_mov_rdi_l
     call write_to_file
@@ -1429,6 +1440,16 @@ run_codegen:
     cmp byte [r13], 5
     je .sys_rsi_lit
 
+    ; --- FIX: Raw Pointer Check ---
+    push r13
+    mov r13, [r13 + 8]
+    call find_symbol
+    pop r13
+    cmp rax, 1
+    jne .sys_rsi_normal
+    cmp byte [rdx + 8], 3      ; Is it a raw[] array?
+    je .sys_rsi_lit            ; If yes, load its bare address!
+.sys_rsi_normal:
     mov rsi, asm_mov_rsi_l
     mov rdx, len_asm_mov_rsi_l
     call write_to_file
@@ -1478,6 +1499,17 @@ run_codegen:
     
     cmp byte [r13], 5
     je .sys_rdx_lit
+
+    ; --- FIX: Raw Pointer Check ---
+    push r13
+    mov r13, [r13 + 8]
+    call find_symbol
+    pop r13
+    cmp rax, 1
+    jne .sys_rdx_normal
+    cmp byte [rdx + 8], 3      ; Is it a raw[] array?
+    je .sys_rdx_lit            ; If yes, load its bare address!
+.sys_rdx_normal:
     mov rsi, asm_mov_rdx_l
     mov rdx, len_asm_mov_rdx_l
     call write_to_file
