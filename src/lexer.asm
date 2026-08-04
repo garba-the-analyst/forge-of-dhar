@@ -1,5 +1,5 @@
 ; ==============================================================================
-; THE FORGE OF DHAR (V0.2.0 ARCHITECTURE - The Megabyte Update)
+; THE FORGE OF DHAR (V0.2.1 ARCHITECTURE - The Megabyte Update + Pointer Fix)
 ; Final Pre-Bootstrapped x86_64 Native Systems Compiler
 ; Author: Abdullahi Baba Garba (Garba the Analyst)
 ; ==============================================================================
@@ -1402,7 +1402,7 @@ run_codegen:
     pop r13
     cmp rax, 1
     jne .sys_rdi_normal
-    cmp byte [rdx + 8], 3      ; Is it a raw[] array?
+    cmp byte [rdx + 9], 3      ; FIX: Offset 9 holds the type flag!
     je .sys_rdi_lit            ; If yes, load its bare address!
 .sys_rdi_normal:
     mov rsi, asm_mov_rdi_l
@@ -1448,7 +1448,7 @@ run_codegen:
     pop r13
     cmp rax, 1
     jne .sys_rsi_normal
-    cmp byte [rdx + 8], 3      ; Is it a raw[] array?
+    cmp byte [rdx + 9], 3      ; FIX: Offset 9 holds the type flag!
     je .sys_rsi_lit            ; If yes, load its bare address!
 .sys_rsi_normal:
     mov rsi, asm_mov_rsi_l
@@ -1508,7 +1508,7 @@ run_codegen:
     pop r13
     cmp rax, 1
     jne .sys_rdx_normal
-    cmp byte [rdx + 8], 3      ; Is it a raw[] array?
+    cmp byte [rdx + 9], 3      ; FIX: Offset 9 holds the type flag!
     je .sys_rdx_lit            ; If yes, load its bare address!
 .sys_rdx_normal:
     mov rsi, asm_mov_rdx_l
