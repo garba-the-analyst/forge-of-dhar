@@ -1,5 +1,5 @@
 ; ==============================================================================
-; THE FORGE OF DHAR (V0.1.2 ARCHITECTURE)
+; THE FORGE OF DHAR (V0.2.0 ARCHITECTURE - The Megabyte Update)
 ; Final Pre-Bootstrapped x86_64 Native Systems Compiler
 ; Author: Abdullahi Baba Garba (Garba the Analyst)
 ; ==============================================================================
@@ -167,18 +167,19 @@ section .data
     
     newline db 10
 
+; --- V0.2.0: THE MEGABYTE EXPANSION ---
 section .bss
-    token_array resb 65536         
+    token_array resb 1048576        ; 1MB Token Array (65,536 tokens)
     token_count resq 1              
-    string_pool resb 65536          
+    string_pool resb 1048576        ; 1MB String Pool
     pool_offset resq 1
-    symbol_table resb 65536         
+    symbol_table resb 1048576       ; 1MB Symbol Table (32,768 symbols)
     symbol_count resq 1
-    cf_stack resb 8192              
+    cf_stack resb 65536             ; 64KB Control Flow Stack
     cf_sp resq 1                    
     label_id_counter resq 1         
-    file_buffer resb 4096           
-    word_buffer resb 1024           
+    file_buffer resb 1048576        ; 1MB Source File Buffer
+    word_buffer resb 4096           ; 4KB Word Buffer
     word_len resq 1
     is_line_start resb 1
     indent_count resw 1             
@@ -216,7 +217,7 @@ _start:
     mov rax, 0              
     mov rdi, r8             
     mov rsi, file_buffer    
-    mov rdx, 4096           
+    mov rdx, 1048576        ; FIX: V0.2.0 Read up to 1MB of source code!
     syscall
     mov byte [file_buffer + rax], 0     
 
