@@ -10,15 +10,15 @@ task test_memory():
 
 task test_logic():
     flux state: i32 = 1
-    flux out: str
+    flux out_msg: str
     
     when state == 1:
-        out = "[OK] Control flow (when) passed.\n"
+        out_msg = "[OK] Control flow (when) passed.\n"
         state = state + 1
     fallback:
-        out = "[FAIL] Control flow (fallback) broke.\n"
+        out_msg = "[FAIL] Control flow (fallback) broke.\n"
         
-    sys 1, 1, out, 33
+    sys 1, 1, out_msg, 33
 
     when state == 2:
         flux loop_count: i32 = 0

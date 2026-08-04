@@ -1,15 +1,10 @@
 ; ==============================================================================
-; THE FORGE OF DHAR (V0 ARCHITECTURE)
+; THE FORGE OF DHAR (V0.1.1 ARCHITECTURE)
 ; Final Pre-Bootstrapped x86_64 Native Systems Compiler
 ; Author: Abdullahi Baba Garba (Garba the Analyst)
 ; ==============================================================================
-; This compiler parses Dhar source code natively, builds a symbol table,
-; tracks indentation-based scope, and emits bare-metal x86_64 NASM assembly.
-; It operates with zero dependencies (no libc).
-; ==============================================================================
 
 section .data
-    ; --- CLI Messages ---
     usage_msg db "Usage: ./build/dharc <source_file.dhar>", 10, 0
     usage_len equ $ - usage_msg
     err_msg db "Error: Could not open source file.", 10, 0
@@ -17,11 +12,9 @@ section .data
     out_file db "build/output.asm", 0
     err_out db "Error: Could not create build/output.asm", 10, 0
     err_out_len equ $ - err_out
+    O_FLAGS equ 577         
+    MODE equ 420            
 
-    O_FLAGS equ 577         ; Flags for file creation (O_CREAT | O_WRONLY | O_TRUNC)
-    MODE equ 420            ; Permissions 0644
-
-    ; --- Dhar Reserved Keywords ---
     kw_lock db "lock", 0
     kw_flux db "flux", 0
     kw_task db "task", 0
@@ -32,8 +25,11 @@ section .data
     kw_span db "span", 0            
     kw_sys db "sys", 0              
     kw_fallback db "fallback", 0    
+    
+    ; V0.1 NEW PRIMITIVES
+    kw_peek db "peek", 0
+    kw_sysret db "sysret", 0
 
-    ; --- Compilation Stage Logging ---
     msg_done db "Total tokens mapped into Memory Array: ", 0
     len_done equ $ - msg_done
     msg_parsing db 10, "--- Starting Syntactic Analysis ---", 10, 0
@@ -47,7 +43,6 @@ section .data
     msg_gen_done db "Code Generation Successful: build/output.asm created.", 10, 0
     len_gen_done equ $ - msg_gen_done
 
-    ; --- Error Handling Strings ---
     msg_err_task db "Syntax Error: Expected Identifier after 'task' on line ", 0
     len_err_task equ $ - msg_err_task
     msg_err_var_ident db "Syntax Error: Expected Identifier after 'lock'/'flux' on line ", 0
@@ -67,27 +62,20 @@ section .data
     msg_err_syntax db "Syntax Error: Invalid Task Parameter Definition on line ", 0
     len_err_syntax equ $ - msg_err_syntax
 
-    ; --- Code Generation (Assembly Injection Strings) ---
     asm_data db "section .data", 10
     len_asm_data equ $ - asm_data
-
     asm_str_prefix db "str_"
     len_asm_str_prefix equ $ - asm_str_prefix
-    
-    ; Emitting backticks (96) instead of Quotes (34) for native NASM \n escaping support
     asm_db_quote db " db ", 96
     len_asm_db_quote equ $ - asm_db_quote
     asm_quote_zero db 96, ", 0", 10
     len_asm_quote_zero equ $ - asm_quote_zero
-
     asm_bss db 10, "section .bss", 10
     len_asm_bss equ $ - asm_bss
     asm_resq db " resq 1", 10
     len_asm_resq equ $ - asm_resq
     asm_resq_base db " resq "
     len_asm_resq_base equ $ - asm_resq_base
-    
-    ; Master Entry Architecture: _start always calls core, then sys_exits safely
     asm_text db 10, "section .text", 10, "    global _start", 10, "_start:", 10, "    call core", 10, "    mov rax, 60", 10, "    xor rdi, rdi", 10, "    syscall", 10, 10
     len_asm_text equ $ - asm_text
     
@@ -157,7 +145,21 @@ section .data
     asm_syscall db "    syscall", 10
     len_asm_syscall equ $ - asm_syscall
 
-    ; Invisible RAII string blocks (Syscall execution bypassed for V0 Static Memory Safety)
+    ; --- V0.1 Peek & Sysret Assembly Generation Strings ---
+    asm_peek_1 db "    mov rax, qword ["
+    len_asm_peek_1 equ $ - asm_peek_1
+    asm_peek_2 db "]", 10, "    mov rsi, "
+    len_asm_peek_2 equ $ - asm_peek_2
+    asm_peek_3 db 10, "    xor rcx, rcx", 10, "    mov cl, byte [rsi + rax]", 10, "    mov qword ["
+    len_asm_peek_3 equ $ - asm_peek_3
+    asm_peek_4 db "], rcx", 10
+    len_asm_peek_4 equ $ - asm_peek_4
+
+    asm_sysret_1 db "    mov qword ["
+    len_asm_sysret_1 equ $ - asm_sysret_1
+    asm_sysret_2 db "], rax", 10
+    len_asm_sysret_2 equ $ - asm_sysret_2
+
     asm_munmap_1 db "    ; --- Scope Cleanup (Neutered for V0) ---", 10, "    ; mov rax, 11", 10, "    ; mov rdi, "
     len_asm_munmap_1 equ $ - asm_munmap_1
     asm_munmap_2 db 10, "    ; mov rsi, "
@@ -166,42 +168,32 @@ section .data
     newline db 10
 
 section .bss
-    ; --- Core Compiler Memory Structures ---
-    token_array resb 65536          ; Stores Lexer outputs (Type, ID, Line, Indent)
-    token_count resq 1              ; Total parsed tokens
-    string_pool resb 65536          ; Flat memory pool for identifiers and literals
+    token_array resb 65536         
+    token_count resq 1              
+    string_pool resb 65536          
     pool_offset resq 1
-    symbol_table resb 65536         ; Maps variables/tasks to memory traits
+    symbol_table resb 65536         
     symbol_count resq 1
-
-    ; --- Control Flow & State Tracking ---
-    cf_stack resb 8192              ; Tracks scope blocks for when/span/task closes
-    cf_sp resq 1                    ; Stack Pointer
-    label_id_counter resq 1         ; Generates unique `.L_START_X` labels
-
-    ; --- File I/O Buffers ---
-    file_buffer resb 4096           ; Raw source file buffer
-    word_buffer resb 1024           ; Temp buffer for building lexer tokens
+    cf_stack resb 8192              
+    cf_sp resq 1                    
+    label_id_counter resq 1         
+    file_buffer resb 4096           
+    word_buffer resb 1024           
     word_len resq 1
-    
     is_line_start resb 1
-    indent_count resw 1             ; Spaces/Tabs counter for Python-like scoping
+    indent_count resw 1             
     current_indent resw 1
     current_line resd 1
 
 section .text
     global _start
 
-; ==============================================================================
-; PHASE 1: COMPILER INITIALIZATION & FILE I/O
-; ==============================================================================
 _start:
-    mov rbx, [rsp]                  ; Extract argc
-    cmp rbx, 2                      ; Check if user provided source file
+    mov rbx, [rsp]                  
+    cmp rbx, 2                      
     jl .print_usage
-    mov r12, [rsp + 16]             ; Extract argv[1] (File path)
+    mov r12, [rsp + 16]             
 
-    ; Initialize compiler state
     mov dword [current_line], 1
     mov word [indent_count], 0
     mov word [current_indent], 0
@@ -212,7 +204,6 @@ _start:
     mov qword [cf_sp], 0
     mov qword [label_id_counter], 1
 
-    ; Native sys_open to read source code
     mov rax, 2              
     mov rdi, r12      
     mov rsi, 0              
@@ -222,25 +213,19 @@ _start:
     jl .file_error
     mov r8, rax             
 
-    ; Native sys_read
     mov rax, 0              
     mov rdi, r8             
     mov rsi, file_buffer    
     mov rdx, 4096           
     syscall
-    mov byte [file_buffer + rax], 0     ; Null terminate
+    mov byte [file_buffer + rax], 0     
 
-    ; Native sys_close
     mov rax, 3              
     mov rdi, r8             
     syscall
     
     mov rsi, file_buffer    
 
-; ==============================================================================
-; PHASE 2: LEXICAL ANALYSIS (The Lexer)
-; Translates raw text bytes into structured Token Arrays and maps indentation.
-; ==============================================================================
 .next_char:
     mov al, byte [rsi]
     cmp al, 0
@@ -249,14 +234,13 @@ _start:
     cmp byte [is_line_start], 1
     jne .normal_processing
 
-    ; Count Indentation
-    cmp al, 32                      ; Space
+    cmp al, 32                      
     je .count_space
-    cmp al, 9                       ; Tab
+    cmp al, 9                       
     je .count_space
-    cmp al, 13                      ; Carriage Return (\r)
+    cmp al, 13                      
     je .skip_char
-    cmp al, 10                      ; Newline
+    cmp al, 10                      
     je .reset_line
     
     mov byte [is_line_start], 0
@@ -273,31 +257,29 @@ _start:
     cmp al, 9
     je .handle_space
     
-    ; Intercept syntax punctuation
-    cmp al, 58                      ; ':'
+    cmp al, 58                      
     je .handle_colon
-    cmp al, 40                      ; '('
+    cmp al, 40                      
     je .handle_lparen
-    cmp al, 41                      ; ')'
+    cmp al, 41                      
     je .handle_rparen
-    cmp al, 61                      ; '='
+    cmp al, 61                      
     je .handle_equals
-    cmp al, 43                      ; '+'
+    cmp al, 43                      
     je .handle_plus
-    cmp al, 45                      ; '-'
+    cmp al, 45                      
     je .handle_minus
-    cmp al, 91                      ; '['
+    cmp al, 91                      
     je .handle_lbracket
-    cmp al, 93                      ; ']'
+    cmp al, 93                      
     je .handle_rbracket
-    cmp al, 44                      ; ','
+    cmp al, 44                      
     je .handle_comma
-    cmp al, 34                      ; '"'
+    cmp al, 34                      
     je .handle_quote
-    cmp al, 59                      ; ';'
+    cmp al, 59                      
     je .start_comment
 
-    ; Accumulate alphanumeric characters into word buffer
     mov rdi, word_buffer
     mov rcx, [word_len]
     add rdi, rcx
@@ -356,7 +338,7 @@ _start:
     jmp .next_char
 .handle_equals:
     call process_current_word
-    cmp byte [rsi + 1], 61          ; Check for '==' (Double Equals)
+    cmp byte [rsi + 1], 61          
     je .handle_double_equals
     mov r8b, 3
     mov r9b, 4                  
@@ -479,27 +461,20 @@ _start:
     mov rax, [token_count]
     call print_num
     
-    ; Transfer control down the pipeline
     call run_parser
     call run_codegen
     
-    mov rax, 60                     ; sys_exit compiler
+    mov rax, 60                     
     xor rdi, rdi
     syscall
 
-
-; ==============================================================================
-; PHASE 3: PARSER & SEMANTIC ENGINE
-; Validates grammar logic, registers symbols, enforces mutability rules.
-; ==============================================================================
 run_parser:
     mov rax, 1
     mov rdi, 1
     mov rsi, msg_parsing
     mov rdx, len_parsing
     syscall
-
-    xor rcx, rcx                    ; Primary Token Iterator
+    xor rcx, rcx                    
 
 .parse_loop:
     cmp rcx, [token_count]          
@@ -530,10 +505,22 @@ run_parser:
     je .check_sys_stmt
     cmp r9b, 7                      
     je .check_fallback_stmt
+    cmp r9b, 8
+    je .check_peek_stmt
+    cmp r9b, 9
+    je .check_sysret_stmt
+    jmp .next_token
+
+; --- NEW STAGE 1 PARSER SKIPS (Fixed Off-By-One) ---
+.check_peek_stmt:
+    add rcx, 5
+    jmp .next_token
+.check_sysret_stmt:
+    add rcx, 1
     jmp .next_token
 
 .check_fallback_stmt:
-    add rcx, 2                      
+    add rcx, 1           ; FIX: 1 skip + the loop's 1 inc = exactly 2 tokens!
     jmp .next_token
 .check_cf_stmt:
     add rcx, 4
@@ -906,11 +893,6 @@ run_parser:
     call print_num
     ret
 
-; ==============================================================================
-; PHASE 4: BACKEND CODE GENERATOR
-; Iterates tokens and translates validated structures into x86_64 NASM Strings.
-; Outputs to `build/output.asm`
-; ==============================================================================
 run_codegen:
     mov rax, 1
     mov rdi, 1
@@ -1028,7 +1010,6 @@ run_codegen:
     shl rax, 4                      
     lea rbx, [token_array + rax]
 
-; Determine if the indentation level indicates a closed scope block
 .check_cf_close:
     cmp qword [cf_sp], 0
     je .cf_close_done
@@ -1099,6 +1080,85 @@ run_codegen:
     je .handle_control_flow
     cmp byte [rbx + 1], 6
     je .handle_syscall
+    cmp byte [rbx + 1], 8
+    je .handle_peek
+    cmp byte [rbx + 1], 9
+    je .handle_sysret
+    jmp .text_skip
+
+.handle_peek:
+    mov rax, rcx
+    add rax, 5
+    shl rax, 4
+    lea r12, [token_array + rax] 
+    
+    mov rsi, asm_peek_1
+    mov rdx, len_asm_peek_1
+    call write_to_file
+    mov rdi, [r12 + 8] 
+    call get_strlen
+    mov rdx, rax
+    mov rsi, rdi
+    call write_to_file
+    
+    mov rsi, asm_peek_2
+    mov rdx, len_asm_peek_2
+    call write_to_file
+
+    mov rax, rcx
+    add rax, 3
+    shl rax, 4
+    lea r12, [token_array + rax] 
+    
+    mov rdi, [r12 + 8] 
+    call get_strlen
+    mov rdx, rax
+    mov rsi, rdi
+    call write_to_file
+
+    mov rsi, asm_peek_3
+    mov rdx, len_asm_peek_3
+    call write_to_file
+
+    mov rax, rcx
+    add rax, 1
+    shl rax, 4
+    lea r12, [token_array + rax] 
+    
+    mov rdi, [r12 + 8] 
+    call get_strlen
+    mov rdx, rax
+    mov rsi, rdi
+    call write_to_file
+
+    mov rsi, asm_peek_4
+    mov rdx, len_asm_peek_4
+    call write_to_file
+
+    add rcx, 6
+    jmp .text_skip
+
+.handle_sysret:
+    mov rax, rcx
+    add rax, 1
+    shl rax, 4
+    lea r12, [token_array + rax]
+    
+    mov rsi, asm_sysret_1
+    mov rdx, len_asm_sysret_1
+    call write_to_file
+    
+    mov rdi, [r12 + 8]
+    call get_strlen
+    mov rdx, rax
+    mov rsi, rdi
+    call write_to_file
+    
+    mov rsi, asm_sysret_2
+    mov rdx, len_asm_sysret_2
+    call write_to_file
+    
+    add rcx, 2
     jmp .text_skip
 
 .handle_var_decl_cg:
@@ -1930,7 +1990,6 @@ run_codegen:
     inc rcx
     jmp .text_loop
 
-; Determines if scopes are closing at EOF and prints appropriate closing labels/rets
 .text_done:
 .empty_cf_stack:
     cmp qword [cf_sp], 0
@@ -1941,7 +2000,7 @@ run_codegen:
     lea r12, [cf_stack + r14]
     
     mov rdi, [r12]
-    mov r13, [r12 + 16]             ; FIX: Use r13 to protect r15 (File Descriptor)
+    mov r13, [r12 + 16]             
 
     cmp r13, 4                      
     je .empty_task_close
@@ -1989,7 +2048,6 @@ run_codegen:
 ; ==============================================================================
 ; UTILITY & FILE I/O ROUTINES
 ; ==============================================================================
-
 emit_ret:
     push rax
     push rdi
@@ -2046,10 +2104,6 @@ emit_scope_cleanup:
     mov rsi, newline
     mov rdx, 1
     call write_to_file
-    
-    ; STAGE 1 PATCH: We bypass the unmap syscall execution.
-    ; Because V0 uses static .bss memory, executing sys_munmap here
-    ; would tear a hole in the data segment and cause a Segfault!
     
     mov byte [rbx + 8], 0           
 
@@ -2330,6 +2384,17 @@ process_current_word:
     call string_compare
     cmp rax, 1
     je .found_fallback
+    
+    mov rdi, word_buffer
+    mov rdx, kw_peek
+    call string_compare
+    cmp rax, 1
+    je .found_peek
+    mov rdi, word_buffer
+    mov rdx, kw_sysret
+    call string_compare
+    cmp rax, 1
+    je .found_sysret
 
     call save_string
     mov r8b, 2              
@@ -2394,14 +2459,27 @@ process_current_word:
     call store_token
     jmp .reset_buffer
 .found_sys:
-    mov r8b, 1
+    mov r8b, 1              
     mov r9b, 6              
     xor r10, r10
     call store_token
     jmp .reset_buffer
 .found_fallback:
-    mov r8b, 1
+    mov r8b, 1              
     mov r9b, 7              
+    xor r10, r10
+    call store_token
+    jmp .reset_buffer
+
+.found_peek:
+    mov r8b, 1
+    mov r9b, 8
+    xor r10, r10
+    call store_token
+    jmp .reset_buffer
+.found_sysret:
+    mov r8b, 1
+    mov r9b, 9
     xor r10, r10
     call store_token
 
