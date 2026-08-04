@@ -1,11 +1,11 @@
 ; ==============================================================================
-; THE FORGE OF DHAR (V0.2.1 ARCHITECTURE - The Megabyte Update + Pointer Fix)
+; THE FORGE OF DHAR (V0.2.2 ARCHITECTURE - Multi-Kernel Target-Triple Dispatch)
 ; Final Pre-Bootstrapped x86_64 Native Systems Compiler
 ; Author: Abdullahi Baba Garba (Garba the Analyst)
 ; ==============================================================================
 
 section .data
-    usage_msg db "Usage: ./build/dharc <source_file.dhar>", 10, 0
+    usage_msg db "Usage: ./build/dharc <source_file.dhar> [--target=linux|windows|wasi]", 10, 0
     usage_len equ $ - usage_msg
     err_msg db "Error: Could not open source file.", 10, 0
     err_len equ $ - err_msg
@@ -29,6 +29,11 @@ section .data
     ; V0.1 NEW PRIMITIVES
     kw_peek db "peek", 0
     kw_sysret db "sysret", 0
+
+    ; TARGET TRIPLE STRINGS
+    str_target_linux db "--target=linux", 0
+    str_target_windows db "--target=windows", 0
+    str_target_wasi db "--target=wasi", 0
 
     msg_done db "Total tokens mapped into Memory Array: ", 0
     len_done equ $ - msg_done
@@ -167,7 +172,7 @@ section .data
     
     newline db 10
 
-; --- V0.2.0: THE MEGABYTE EXPANSION ---
+; --- V0.2.2: THE MEGABYTE EXPANSION & TARGET REGISTRY ---
 section .bss
     token_array resb 1048576        ; 1MB Token Array (65,536 tokens)
     token_count resq 1              
@@ -185,16 +190,47 @@ section .bss
     indent_count resw 1             
     current_indent resw 1
     current_line resd 1
+    target_os_flag resq 1           ; 0 = Linux, 1 = Windows PE, 2 = WASI
 
 section .text
     global _start
 
 _start:
-    mov rbx, [rsp]                  
+    mov rbx, [rsp]                  ; Load argc
     cmp rbx, 2                      
     jl .print_usage
-    mov r12, [rsp + 16]             
+    mov r12, [rsp + 16]             ; argv[1] is our source file
 
+    ; --- TARGET TRIPLE PARSING ---
+    mov qword [target_os_flag], 0   ; Default to Linux ELF
+    cmp rbx, 3                      ; Check if target flag argument exists
+    jl .init_compiler_state
+    
+    mov r13, [rsp + 24]             ; argv[2] is target triple flag
+    
+    mov rdi, r13
+    mov rdx, str_target_windows
+    call string_compare
+    cmp rax, 1
+    je .set_target_windows
+
+    mov rdi, r13
+    mov rdx, str_target_wasi
+    call string_compare
+    cmp rax, 1
+    je .set_target_wasi
+
+    jmp .init_compiler_state
+
+.set_target_windows:
+    mov qword [target_os_flag], 1
+    jmp .init_compiler_state
+
+.set_target_wasi:
+    mov qword [target_os_flag], 2
+    jmp .init_compiler_state
+
+.init_compiler_state:
     mov dword [current_line], 1
     mov word [indent_count], 0
     mov word [current_indent], 0
@@ -217,7 +253,7 @@ _start:
     mov rax, 0              
     mov rdi, r8             
     mov rsi, file_buffer    
-    mov rdx, 1048576        ; FIX: V0.2.0 Read up to 1MB of source code!
+    mov rdx, 1048576        ; Read up to 1MB of source code
     syscall
     mov byte [file_buffer + rax], 0     
 
@@ -512,7 +548,6 @@ run_parser:
     je .check_sysret_stmt
     jmp .next_token
 
-; --- NEW STAGE 1 PARSER SKIPS (Fixed Off-By-One) ---
 .check_peek_stmt:
     add rcx, 5
     jmp .next_token
@@ -1136,7 +1171,7 @@ run_codegen:
     mov rdx, len_asm_peek_4
     call write_to_file
 
-    add rcx, 5          ; FIX: Was 6. Prevents off-by-one skip!
+    add rcx, 5          
     jmp .text_skip
 
 .handle_sysret:
@@ -1159,7 +1194,7 @@ run_codegen:
     mov rdx, len_asm_sysret_2
     call write_to_file
     
-    add rcx, 1          ; FIX: Was 2. Prevents off-by-one skip!
+    add rcx, 1          
     jmp .text_skip
 
 .handle_var_decl_cg:
@@ -1395,15 +1430,14 @@ run_codegen:
     cmp byte [r13], 5
     je .sys_rdi_lit
 
-    ; --- FIX: Raw Pointer Check ---
     push r13
     mov r13, [r13 + 8]
     call find_symbol
     pop r13
     cmp rax, 1
     jne .sys_rdi_normal
-    cmp byte [rdx + 9], 3      ; FIX: Offset 9 holds the type flag!
-    je .sys_rdi_lit            ; If yes, load its bare address!
+    cmp byte [rdx + 9], 3      
+    je .sys_rdi_lit            
 .sys_rdi_normal:
     mov rsi, asm_mov_rdi_l
     mov rdx, len_asm_mov_rdi_l
@@ -1441,15 +1475,14 @@ run_codegen:
     cmp byte [r13], 5
     je .sys_rsi_lit
 
-    ; --- FIX: Raw Pointer Check ---
     push r13
     mov r13, [r13 + 8]
     call find_symbol
     pop r13
     cmp rax, 1
     jne .sys_rsi_normal
-    cmp byte [rdx + 9], 3      ; FIX: Offset 9 holds the type flag!
-    je .sys_rsi_lit            ; If yes, load its bare address!
+    cmp byte [rdx + 9], 3      
+    je .sys_rsi_lit            
 .sys_rsi_normal:
     mov rsi, asm_mov_rsi_l
     mov rdx, len_asm_mov_rsi_l
@@ -1501,15 +1534,14 @@ run_codegen:
     cmp byte [r13], 5
     je .sys_rdx_lit
 
-    ; --- FIX: Raw Pointer Check ---
     push r13
     mov r13, [r13 + 8]
     call find_symbol
     pop r13
     cmp rax, 1
     jne .sys_rdx_normal
-    cmp byte [rdx + 9], 3      ; FIX: Offset 9 holds the type flag!
-    je .sys_rdx_lit            ; If yes, load its bare address!
+    cmp byte [rdx + 9], 3      
+    je .sys_rdx_lit            
 .sys_rdx_normal:
     mov rsi, asm_mov_rdx_l
     mov rdx, len_asm_mov_rdx_l

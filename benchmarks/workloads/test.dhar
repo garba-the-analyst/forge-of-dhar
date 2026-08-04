@@ -1,0 +1,31 @@
+task core():
+    lock msg: str = "[Dhar] Workload Execution Complete.\n"
+    flux token_count: i32 = 0
+    flux no_op: i32 = 0
+
+    flux iteration: i32 = 0
+    span iteration < 16:
+        flux cur: i32 = 0
+        flux block: i32 = 0
+        span block < 256:
+            flux inner: i32 = 0
+            span inner < 256:
+                when cur == 32:
+                    token_count = token_count + 1
+                fallback:
+                    when cur == 10:
+                        token_count = token_count + 1
+                    fallback:
+                        no_op = 0
+                
+                cur = cur + 1
+                when cur == 256:
+                    cur = 0
+                fallback:
+                    no_op = 0
+                
+                inner = inner + 1
+            block = block + 1
+        iteration = iteration + 1
+
+    sys 1, 1, msg, 34
