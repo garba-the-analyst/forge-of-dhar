@@ -1,50 +1,27 @@
-# Dhar Compiler - Master Build Script
-# Architecture: x86_64 Linux
+# Dhar Multi-Target Makefile
+ASM = nasm
+LD_LINUX = ld
+LD_WINDOWS = x86_64-w64-mingw32-ld
 
-# Toolchain definitions
-AS = nasm
-LD = ld
-
-# Flags
-# -f elf64 : Targets 64-bit Linux executable format
-# -g -F dwarf : Generates debug symbols for GDB
-ASFLAGS = -f elf64 -g -F dwarf
-LDFLAGS = -m elf_x86_64
-
-# Directories
 SRC_DIR = src
 BUILD_DIR = build
+BENCH_DIR = benchmarks/workloads
 
-# Source and Object files
-# Currently targeting the lexer, this will expand as we build the parser
-SOURCES = $(SRC_DIR)/lexer.asm
-OBJECTS = $(BUILD_DIR)/lexer.o
+.PHONY: all clean linux windows
 
-# Final Executable Name
-EXECUTABLE = $(BUILD_DIR)/dharc
+all: linux
 
-# Default build target
-all: clean setup $(EXECUTABLE)
-
-# Create build directory if it doesn't exist
-setup:
+linux: 
+	@echo "[+] Compiling Dhar native Linux target..."
 	mkdir -p $(BUILD_DIR)
+	$(ASM) -f elf64 $(BUILD_DIR)/output.asm -o $(BUILD_DIR)/output.o
+	$(LD_LINUX) -m elf_x86_64 -o $(BUILD_DIR)/dhar_linux $(BUILD_DIR)/output.o
 
-# Link the object files into the final executable
-$(EXECUTABLE): $(OBJECTS)
-	$(LD) $(LDFLAGS) -o $@ $(OBJECTS)
+windows:
+	@echo "[+] Cross-compiling Dhar Windows PE target..."
+	mkdir -p $(BUILD_DIR)
+	$(ASM) -f win64 $(BUILD_DIR)/output_win.asm -o $(BUILD_DIR)/output_win.obj
+	$(LD_WINDOWS) -mi386pep -o $(BUILD_DIR)/dhar.exe $(BUILD_DIR)/output_win.obj -lkernel32 -luser32
 
-# Compile Assembly source into object files
-$(BUILD_DIR)/%.o: $(SRC_DIR)/%.asm
-	$(AS) $(ASFLAGS) $< -o $@
-
-# Run the compiled binary
-run: all
-	./$(EXECUTABLE)
-
-# Clean the build directory
 clean:
 	rm -rf $(BUILD_DIR)/*
-
-# Declare phony targets to prevent conflicts with file names
-.PHONY: all setup run clean
