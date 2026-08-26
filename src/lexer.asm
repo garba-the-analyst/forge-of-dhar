@@ -1,6 +1,8 @@
 ; ==============================================================================
-; THE FORGE OF DHAR (V0.2.2 ARCHITECTURE - Multi-Kernel Target-Triple Dispatch)
+; THE FORGE OF DHAR (V0.2.3 ARCHITECTURE - Multi-Kernel Target-Triple Dispatch)
 ; Final Pre-Bootstrapped x86_64 Native Systems Compiler
+; V0.2.3: Six-operator conditional engine (== != < > <= >=) with operator-aware
+;         jump selection and variable-to-variable memory comparison.
 ; Author: Abdullahi Baba Garba (Garba the Analyst)
 ; ==============================================================================
 
@@ -66,6 +68,8 @@ section .data
     len_err_immut equ $ - msg_err_immut
     msg_err_syntax db "Syntax Error: Invalid Task Parameter Definition on line ", 0
     len_err_syntax equ $ - msg_err_syntax
+    msg_err_cond db "Syntax Error: Invalid comparison operator in condition on line ", 0
+    len_err_cond equ $ - msg_err_cond
 
     asm_data db "section .data", 10
     len_asm_data equ $ - asm_data
@@ -103,6 +107,34 @@ section .data
     len_asm_jne_l_end equ $ - asm_jne_l_end
     asm_jne_l_fallback db "    jne .L_FALLBACK_"
     len_asm_jne_l_fallback equ $ - asm_jne_l_fallback
+
+    ; --- V0.2.3 Comparison Operator Conditional Jump Strings ---
+    ; Semantics: jump-away-if-false. Exit jump = logical inverse of the operator.
+    ;   == -> jne | != -> je | < -> jge | > -> jle | <= -> jg | >= -> jl
+    asm_je_l_end db "    je .L_END_"
+    len_asm_je_l_end equ $ - asm_je_l_end
+    asm_je_l_fallback db "    je .L_FALLBACK_"
+    len_asm_je_l_fallback equ $ - asm_je_l_fallback
+    asm_jl_l_end db "    jl .L_END_"
+    len_asm_jl_l_end equ $ - asm_jl_l_end
+    asm_jl_l_fallback db "    jl .L_FALLBACK_"
+    len_asm_jl_l_fallback equ $ - asm_jl_l_fallback
+    asm_jg_l_end db "    jg .L_END_"
+    len_asm_jg_l_end equ $ - asm_jg_l_end
+    asm_jg_l_fallback db "    jg .L_FALLBACK_"
+    len_asm_jg_l_fallback equ $ - asm_jg_l_fallback
+    asm_jle_l_end db "    jle .L_END_"
+    len_asm_jle_l_end equ $ - asm_jle_l_end
+    asm_jle_l_fallback db "    jle .L_FALLBACK_"
+    len_asm_jle_l_fallback equ $ - asm_jle_l_fallback
+    asm_jge_l_end db "    jge .L_END_"
+    len_asm_jge_l_end equ $ - asm_jge_l_end
+    asm_jge_l_fallback db "    jge .L_FALLBACK_"
+    len_asm_jge_l_fallback equ $ - asm_jge_l_fallback
+
+    ; Memory-operand compare: RHS is a symbol (variable-to-variable comparison)
+    asm_cmp_rax_mem db "    cmp rax, qword ["
+    len_asm_cmp_rax_mem equ $ - asm_cmp_rax_mem
     asm_jmp_l_end db "    jmp .L_END_"
     len_asm_jmp_l_end equ $ - asm_jmp_l_end
     asm_l_fallback db ".L_FALLBACK_"
@@ -316,6 +348,12 @@ _start:
     je .handle_quote
     cmp al, 59                      
     je .start_comment
+    cmp al, 60                      ; '<'
+    je .handle_lt
+    cmp al, 62                      ; '>'
+    je .handle_gt
+    cmp al, 33                      ; '!'
+    je .handle_bang
 
     mov rdi, word_buffer
     mov rcx, [word_len]
@@ -428,6 +466,61 @@ _start:
     mov r9b, 10                 
     xor r10, r10
     call store_token
+    inc rsi
+    jmp .next_char
+
+; --- V0.2.3: Relational operator handlers ---
+; Operator subtypes: 11='<', 12='>', 13='<=', 14='>=', 15='!='
+.handle_lt:
+    call process_current_word
+    cmp byte [rsi + 1], 61          ; '<=' ?
+    je .handle_lte
+    mov r8b, 3
+    mov r9b, 11
+    xor r10, r10
+    call store_token
+    inc rsi
+    jmp .next_char
+.handle_lte:
+    mov r8b, 3
+    mov r9b, 13
+    xor r10, r10
+    call store_token
+    add rsi, 2
+    jmp .next_char
+.handle_gt:
+    call process_current_word
+    cmp byte [rsi + 1], 61          ; '>=' ?
+    je .handle_gte
+    mov r8b, 3
+    mov r9b, 12
+    xor r10, r10
+    call store_token
+    inc rsi
+    jmp .next_char
+.handle_gte:
+    mov r8b, 3
+    mov r9b, 14
+    xor r10, r10
+    call store_token
+    add rsi, 2
+    jmp .next_char
+.handle_bang:
+    cmp byte [rsi + 1], 61          ; '!=' ? (bare '!' is not a token)
+    jne .bang_word_char
+    call process_current_word
+    mov r8b, 3
+    mov r9b, 15
+    xor r10, r10
+    call store_token
+    add rsi, 2
+    jmp .next_char
+.bang_word_char:
+    mov rdi, word_buffer
+    mov rcx, [word_len]
+    add rdi, rcx
+    mov [rdi], al
+    inc qword [word_len]
     inc rsi
     jmp .next_char
 .start_comment:
@@ -559,6 +652,29 @@ run_parser:
     add rcx, 1                      
     jmp .next_token
 .check_cf_stmt:
+    ; Condition grammar: [when|span] [identifier] [cmp-op] [value]
+    ; Valid operators: '=='(5), '<'(11), '>'(12), '<='(13), '>='(14), '!='(15)
+    mov rax, rcx
+    add rax, 2
+    cmp rax, [token_count]
+    jge .err_bad_condition
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 3
+    jne .err_bad_condition
+    mov r11b, [r12 + 1]
+    cmp r11b, 5                     ; '=='
+    je .cond_op_valid
+    cmp r11b, 11                    ; relational block: 11..15
+    jb .err_bad_condition
+    cmp r11b, 15
+    ja .err_bad_condition
+
+.cond_op_valid:
+    mov rax, rcx
+    add rax, 3                      ; RHS value must exist
+    cmp rax, [token_count]
+    jge .err_bad_condition
     add rcx, 4
     jmp .next_token
 .check_sys_stmt:
@@ -862,6 +978,10 @@ run_parser:
 .err_syntax:
     mov rsi, msg_err_syntax
     mov rdx, len_err_syntax
+    jmp .print_syntax_err
+.err_bad_condition:
+    mov rsi, msg_err_cond
+    mov rdx, len_err_cond
     jmp .print_syntax_err
 .err_expected_identifier:
     mov rsi, msg_err_task
@@ -1358,6 +1478,10 @@ run_codegen:
     mov rsi, asm_close_bracket_nl
     mov rdx, len_asm_close_bracket_nl
     call write_to_file
+
+    ; --- Compare: identifier RHS loads memory operand; otherwise literal text ---
+    cmp byte [r13], 2
+    je .emit_cmp_rhs_mem
     mov rsi, asm_cmp_rax
     mov rdx, len_asm_cmp_rax
     call write_to_file
@@ -1369,16 +1493,86 @@ run_codegen:
     mov rsi, newline
     mov rdx, 1
     call write_to_file
-    
-    cmp byte [rbx + 1], 4
-    je .emit_jne_fallback
-    mov rsi, asm_jne_l_end
-    mov rdx, len_asm_jne_l_end
-    jmp .do_jne_write
-.emit_jne_fallback:
-    mov rsi, asm_jne_l_fallback
-    mov rdx, len_asm_jne_l_fallback
-.do_jne_write:
+    jmp .select_cond_jump
+.emit_cmp_rhs_mem:
+    mov rsi, asm_cmp_rax_mem
+    mov rdx, len_asm_cmp_rax_mem
+    call write_to_file
+    mov rdi, [r13 + 8]              
+    call get_strlen
+    mov rdx, rax
+    mov rsi, rdi
+    call write_to_file
+    mov rsi, asm_close_bracket_nl
+    mov rdx, len_asm_close_bracket_nl
+    call write_to_file
+
+    ; --- Select exit jump: logical inverse of the condition operator ---
+.select_cond_jump:
+    mov rax, rcx
+    add rax, 2
+    shl rax, 4
+    lea r12, [token_array + rax]
+    movzx r13d, byte [r12 + 1]      ; operator subtype (dispatch BEFORE any reg reuse)
+
+    cmp r13b, 15                    ; '!=' -> je
+    je .sel_op_ne
+    cmp r13b, 11                    ; '<' -> jge
+    je .sel_op_lt
+    cmp r13b, 12                    ; '>' -> jle
+    je .sel_op_gt
+    cmp r13b, 13                    ; '<=' -> jg
+    je .sel_op_le
+    cmp r13b, 14                    ; '>=' -> jl
+    je .sel_op_ge
+
+    ; Default: '==' -> jne
+    mov r8, asm_jne_l_end
+    mov r9, len_asm_jne_l_end
+    mov r10, asm_jne_l_fallback
+    mov r11, len_asm_jne_l_fallback
+    jmp .pick_label_variant
+
+.sel_op_ne:
+    mov r8, asm_je_l_end
+    mov r9, len_asm_je_l_end
+    mov r10, asm_je_l_fallback
+    mov r11, len_asm_je_l_fallback
+    jmp .pick_label_variant
+.sel_op_lt:
+    mov r8, asm_jge_l_end
+    mov r9, len_asm_jge_l_end
+    mov r10, asm_jge_l_fallback
+    mov r11, len_asm_jge_l_fallback
+    jmp .pick_label_variant
+.sel_op_gt:
+    mov r8, asm_jle_l_end
+    mov r9, len_asm_jle_l_end
+    mov r10, asm_jle_l_fallback
+    mov r11, len_asm_jle_l_fallback
+    jmp .pick_label_variant
+.sel_op_le:
+    mov r8, asm_jg_l_end
+    mov r9, len_asm_jg_l_end
+    mov r10, asm_jg_l_fallback
+    mov r11, len_asm_jg_l_fallback
+    jmp .pick_label_variant
+.sel_op_ge:
+    mov r8, asm_jl_l_end
+    mov r9, len_asm_jl_l_end
+    mov r10, asm_jl_l_fallback
+    mov r11, len_asm_jl_l_fallback
+
+.pick_label_variant:
+    cmp byte [rbx + 1], 4           ; 'when' exits to fallback label
+    je .use_fallback_jump
+    mov rsi, r8
+    mov rdx, r9
+    jmp .write_cond_jump
+.use_fallback_jump:
+    mov rsi, r10
+    mov rdx, r11
+.write_cond_jump:
     call write_to_file
     pop rax
     call write_rax_to_file

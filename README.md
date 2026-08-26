@@ -1,7 +1,7 @@
-# **⚒️ The Forge of Dhar (V0.2.2 Architecture)**
+# **⚒️ The Forge of Dhar (V0.2.3 Architecture)**
 
 **The Forge of Dhar** is the foundational, pre-bootstrapped systems compiler for the **Dhar Programming Language**.  
-Designed and engineered by **Garba the Analyst**, V0 operates with **zero external dependencies** (no libc, no standard library, no runtime). Written entirely in 100% bare-metal x86\_64 NASM Assembly (src/lexer.asm), it is a self-contained systems compiler capable of dynamic Lexical Analysis, Indentation-Based Syntax Parsing, Symbol Table resolution, Multi-Target Code Generation, and direct Linux/Windows/WASI kernel dispatch.  
+Designed and engineered by **Garba the Analyst**, V0 operates with **zero external dependencies** (no libc, no standard library, no runtime). Written entirely in 100% bare-metal x86\_64 NASM Assembly (src/lexer.asm), it is a self-contained systems compiler capable of dynamic Lexical Analysis, Indentation-Based Syntax Parsing, Symbol Table resolution, Six-Operator Conditional Code Generation (==, \!=, \<, \>, \<=, \>=), and direct native kernel syscall dispatch on the fully operational Linux x86\_64 target (Windows/WASI scaffolding active; see Target Matrix).  
 This repository serves as the Turing-complete foundation required to compile Dhar Stage 1 (the self-hosted compiler written in Dhar itself).
 
 ## **📋 Table of Contents**
@@ -19,7 +19,7 @@ This repository serves as the Turing-complete foundation required to compile Dha
    * [Tasks (Functions) & Subroutine Semantics]
 > 4. [Target Architecture & Cross-Compilation Matrix]
 > 5. [Building & Compiler CLI Usage]
-> 6. [Benchmark Suite & Telemetry Analysis](
+> 6. [Benchmark Suite & Telemetry Analysis]
 > 7. [Comprehensive Code Examples]
 
 ## **⚡ Core Philosophy & Memory Architecture**
@@ -122,24 +122,24 @@ Dhar V0 provides three core primitive data types, each mapped to specific x86\_6
 Dhar requires explicit type annotations using the colon : syntax.
 
 #### **Initialized Variable Declaration**
-
+```
 Code snippet  
 lock status\_code: i32 \= 200  
 flux loop\_counter: i32 \= 0  
 lock greeting: str \= "Welcome to Dhar\\n"
-
+```
 #### **Uninitialized Variable Declaration**
 
 Uninitialized variables allocate space in the .bss segment without generating immediate inline assignment instructions.
-
+```
 Code snippet  
 flux total\_bytes: i32  
 flux input\_buffer: raw\[2048\]
-
+```
 #### **Scalar Reassignment & Arithmetic Semantics**
 
 Mutable flux variables can be reassigned using literals, other variables, or binary arithmetic operations (+, \-):
-
+```
 Code snippet  
 flux val\_a: i32 \= 10  
 flux val\_b: i32 \= 5
@@ -154,7 +154,7 @@ val\_a \= val\_b
 val\_a \= val\_a \+ 1  
 val\_a \= val\_a \- val\_b  
 val\_a \= val\_b \+ 42
-
+```
 ### **5\. Array Indexing & Memory Operations**
 
 Dhar provides raw memory manipulation over raw\[N\] arrays using direct indexing and low-level byte peeking.
@@ -162,7 +162,7 @@ Dhar provides raw memory manipulation over raw\[N\] arrays using direct indexing
 #### **A. Writing to Memory Arrays**
 
 Elements inside a raw buffer are updated using bracket notation buffer\[index\] \= value.
-
+```
 Code snippet  
 task test\_memory():  
     flux buffer: raw\[1024\]  
@@ -173,8 +173,8 @@ task test\_memory():
     buffer\[index\] \= val
 
     ; Write using integer literal index  
-    buffer\[1\] \= 66
-
+    buffer\[1```\] \= 66
+```
 > * **Under the Hood Assembly Generation:**  
 >   Writing to an array loads the index into rax, the value into rcx, and executes an indexed memory store:  
 >   Code snippet  
@@ -186,7 +186,7 @@ task test\_memory():
 
 Reading specific bytes from contiguous memory buffers into scalar variables is performed using the peek keyword.  
 **Syntax:** peek \[destination\_variable\], \[source\_buffer\], \[index\_offset\]
-
+```
 Code snippet  
 task read\_memory():  
     flux memory\_pool: raw\[512\]  
@@ -195,7 +195,7 @@ task read\_memory():
 
     ; Reads 1 byte from memory\_pool at offset index into captured\_byte  
     peek captured\_byte, memory\_pool, offset
-
+```
 > * **Under the Hood Assembly Generation:**  
 >   Code snippet  
 >   mov rax, qword \[offset\]  
@@ -210,9 +210,9 @@ Dhar replaces standard if/else and while keywords with deterministic execution r
 
 #### **A. when and fallback Conditional Blocks**
 
-> * when: Evaluates an equality check (==). If true, execution continues into the indented block. If false, it jumps directly to .L\_FALLBACK\_ or .L\_END\_.  
+> * when: Evaluates a comparison check. Supported operators: \== (equal), \!= (not equal), \< (less than), \> (greater than), \<= (less or equal), \>= (greater or equal). If true, execution continues into the indented block. If false, it jumps directly to .L\_FALLBACK\_ or .L\_END\_.  
 > * fallback: Executes if the preceding when check fails.
-
+```
 Code snippet  
 flux system\_state: i32 \= 1
 
@@ -222,19 +222,21 @@ when system\_state \== 1:
 fallback:  
     lock err\_msg: str \= "System error detected.\\n"  
     sys 1, 1, err\_msg, 23
+```
+Conditions compare an identifier against either an integer literal or another variable of the same type. Arithmetic expressions inside conditions (e.g., x + 1 \< 5) are not supported in V0; compute into a variable first.
 
 #### **B. span Loop Blocks**
 
-> * span: Creates an iterative loop. Evaluates the condition before each loop pass. If true, executes the indented block and jumps back to .L\_START\_.
-
+> * span: Creates an iterative loop. Evaluates the condition before each loop pass using any supported comparison operator (==, !=, <, >, <=, >=). If true, executes the indented block and jumps back to .L\_START\_.
+```
 Code snippet  
 flux iter: i32 \= 0
 
-span iter \== 0:  
+span iter \< 3:  
     lock loop\_msg: str \= "Executing loop pass...\\n"  
     sys 1, 1, loop\_msg, 23  
     iter \= iter \+ 1
-
+```
 ### **7\. Kernel Interfacing & System Calls**
 
 Dhar interacts directly with the host kernel via the sys keyword, mapping sequentially to host registers.
@@ -253,17 +255,17 @@ sys \[sys\_number\], \[arg1\], \[arg2\], \[arg3\]
 | arg3 | Third Argument (e.g., Byte Count / Buffer Length) | rdx |
 
 #### **Standard Output Example (sys\_write)**
-
+```
 Code snippet  
 ; sys\_write(fd=1, buf="Hello\\n", len=6)  
 lock msg: str \= "Hello\\n"  
 sys 1, 1, msg, 6
-
+```
 #### **File Input/Output & Capturing Kernel Return Values (sysret)**
 
 System calls that return data (such as sys\_open returning a file descriptor in rax) use the sysret keyword immediately following the sys statement.  
 **Syntax:** sysret \[destination\_variable\]
-
+```
 Code snippet  
 task read\_file\_example():  
     lock file\_path: str \= "config.txt"  
@@ -281,7 +283,7 @@ task read\_file\_example():
 
     ; sys\_close (rax=3), fd  
     sys 3, fd, 0, 0
-
+```
 ### **8\. Tasks (Functions) & Subroutine Semantics**
 
 A task represents a discrete execution unit.
@@ -291,7 +293,7 @@ A task represents a discrete execution unit.
 > 1. Every Dhar program must contain a main entry point defined as task core():.  
 > 2. Tasks are invoked by name followed by parentheses: task\_name().  
 > 3. Task boundaries generate native assembly subroutines (call task\_name and ret).
-
+```
 Code snippet  
 task print\_header():  
     lock header: str \= "--- DHAR SYSTEM ENGINE \---\\n"  
@@ -304,7 +306,7 @@ task execute\_diagnostics():
 task core():  
     print\_header()  
     execute\_diagnostics()
-
+```
 ## **🎯 Target Architecture & Cross-Compilation Matrix**
 
 The Dhar compiler includes target triple dispatch logic (src/lexer.asm), enabling code generation routing across multiple target platforms:
@@ -326,26 +328,26 @@ The Dhar compiler includes target triple dispatch logic (src/lexer.asm), enablin
 
 ### **Step 1: Assemble the Stage 0 Native Compiler (dharc)**
 
-Compile the raw assembly compiler engine:
-
+Compile the raw assembly compiler engine. Note: the production compiler is **src/lexer.asm alone**; the Python files under src/ are an archived pre-bootstrapping prototype and play no role in the toolchain.
+```
 Bash  
 mkdir \-p build  
 nasm \-f elf64 \-g \-F dwarf src/lexer.asm \-o build/lexer.o  
 ld \-m elf\_x86\_64 \-o build/dharc build/lexer.o
-
+```
 ### **Step 2: Compile a Dhar Source File**
 
 Pass your .dhar source file through dharc to generate native assembly:
-
+```
 Bash  
 \# Compile for Native Linux ELF Target (Default)  
 ./build/dharc benchmarks/workloads/test.dhar \--target=linux
 
 \# Cross-Compile for Windows PE Target  
 ./build/dharc benchmarks/workloads/test.dhar \--target=windows
-
+```
 ### **Step 3: Assemble and Link the Emitted Binary**
-
+```
 Bash  
 \# Assemble emitted Linux assembly  
 nasm \-f elf64 build/output.asm \-o build/output.o
@@ -355,28 +357,37 @@ ld \-m elf\_x86\_64 \-o build/test\_program build/output.o
 
 \# Execute  
 ./build/test\_program
-
+```
 ## **📊 Benchmark Suite & Telemetry Analysis**
 
-Dhar was benchmarked against leading system languages, JIT runtimes, and interpreted engines using a standardized high-throughput byte-stream buffer iteration simulator (16 outer loop cycles, 65,536-byte iteration threshold).  
-Benchmarks were executed under strict CPU core pinning (taskset \-c 1\) with 100 statistical runs per language via hyperfine.
+Dhar was benchmarked against leading system languages, JIT runtimes, and interpreted engines using a standardized high-throughput byte-stream iteration simulator (1,048,576 total condition evaluations: 16 outer cycles x 65,536 inner iterations each).  
+Benchmarks were executed under strict CPU core pinning (taskset \-c 1\) with 100 statistical runs per language via hyperfine (3-run warmup). Full methodology and raw telemetry live in [benchmarks/README.md](benchmarks/README.md).
 
-### **Performance Leaderboard**
+### **Performance Leaderboard (V0.2.3 Telemetry)**
 
-| Rank | Language / Runtime Compiler | Mean Execution Time | Standard Deviation (σ) | Performance Index vs Dhar |
-| :---- | :---- | :---- | :---- | :---- |
-| **1** | **Dhar V0 (Native x86\_64 Assembly Engine)** | **1.1 ms** | $\\pm 1.1\\text{ ms}$ | **1.0x (Baseline)** |
-| **2** | **C (GCC \-nostdlib \-O3)** | **1.5 ms** | $\\pm 1.0\\text{ ms}$ | \~1.36x slower |
-| **3** | **Rust (rustc Release \-C opt-level=3)** | **2.6 ms** | $\\pm 0.8\\text{ ms}$ | \~2.36x slower |
-| **4** | **C++ (G++ \-O3)** | **5.5 ms** | $\\pm 2.6\\text{ ms}$ | \~5.00x slower |
-| **5** | **Node.js (V8 JIT JavaScript)** | **72.9 ms** | $\\pm 11.3\\text{ ms}$ | \~66.27x slower |
-| **6** | **PHP 8.3 (CLI)** | **101.6 ms** | $\\pm 46.9\\text{ ms}$ | \~92.36x slower |
-| **7** | **Java (OpenJDK 21 JIT)** | **107.3 ms** | $\\pm 7.2\\text{ ms}$ | \~97.54x slower |
-| **8** | **Python 3.12** | **140.8 ms** | $\\pm 65.2\\text{ ms}$ | \~128.00x slower |
+| Rank | Language / Runtime Compiler | Mean | Median | Standard Deviation (σ) | Index vs C |
+| :---- | :---- | :---- | :---- | :---- | :---- |
+| **1** | C (GCC \-nostdlib \-O3) | **1.58 ms** | 0.47 ms | ±2.91 ms | 1.0x (Baseline) |
+| **2** | C++ (G++ \-O3) | **2.32 ms** | 0.90 ms | ±5.21 ms | ~1.5x slower |
+| **3** | Rust (rustc Release \-C opt-level=3) | **2.61 ms** | 2.06 ms | ±1.78 ms | ~1.7x slower |
+| **4** | **Dhar V0 (Native x86\_64 Assembly Engine)** | **8.40 ms** | **7.28 ms** | $\\pm 4.93\\text{ ms}$ | \~5.3x slower |
+| **5** | Node.js (V8 JIT JavaScript) | **98.5 ms** | 85.1 ms | ±55.7 ms | \~62x slower |
+| **6** | PHP 8.3 (CLI) | **110.6 ms** | 92.5 ms | ±75.9 ms | \~70x slower |
+| **7** | Java (OpenJDK 21 JIT) | **165.1 ms** | 122.2 ms | ±142.1 ms | \~104x slower |
+| **8** | Python 3.12 | **180.6 ms** | 148.1 ms | ±92.2 ms | \~114x slower |
 
 ### **Architectural Conclusion**
 
-Dhar achieves a **1.1 ms mean execution profile**, outperforming \-nostdlib bare-metal C and release-mode Rust. By compiling directly to lean x86\_64 machine code without runtime wrappers or standard library overhead, Dhar executes at the physical speed limit of the host hardware.
+Dhar V0 is the fastest entry among non-optimizing compilers and sits squarely in the native tier: roughly **5x behind auto-vectorized \-O3 C**, and an order of magnitude ahead of every JIT or interpreted engine (V8, JVM, PHP, CPython).
+
+This gap is expected and documented for V0:
+
+> * **Zero Optimization Passes:** The Stage 0 engine emits naive scalar code. Every variable lives in a memory-resident .bss slot — there is no register allocation, no instruction scheduling, no strength reduction, and no SIMD auto-vectorization. GCC vectorizes this particular workload heavily; Dhar executes it one comparison per instruction.
+> * **Honest Measurement Floor:** At single-digit-millisecond scale, process startup and scheduler jitter dominate the statistics (note σ ≈ mean across the compiled tier; medians are the more stable indicator). Fine-grained rankings inside the native tier should be read as directional.
+> * **Correctness Before Speed:** V0.2.3 fixed inverted codegen for relational operators in span/when conditions (see changelog in benchmarks/README.md). Pre-V0.2.3 telemetry measured a workload whose loops silently never executed and has been fully retired.
+
+By compiling directly to lean x86\_64 machine code with zero runtime, standard library, or GC overhead — while still executing real branchy workloads at native-tier speeds out of the box — Dhar provides the deterministic foundation Stage 1 self-hosting requires. Register allocation and peephole optimization are scheduled as post-bootstrap compiler passes.
+
 
 ## **💻 Comprehensive Code Examples**
 
@@ -384,6 +395,7 @@ Dhar achieves a **1.1 ms mean execution profile**, outperforming \-nostdlib bare
 
 Demonstrates memory allocations, array index stores, control flow branching (when/fallback), loops (span), and system output:
 
+```
 Code snippet  
 task test\_memory():  
     flux buffer: raw\[1024\]  
@@ -426,9 +438,10 @@ task core():
 
     lock end\_msg: str \= "--- ALL V0 SYSTEMS OPERATIONAL \---\\n"  
     sys 1, 1, end\_msg, 35
-
+```
 ### **Example 2: Interactive State Machine & Looping (tests/showcase.dhar)**
 
+```
 Code snippet  
 task greet():  
     lock msg: str \= "Hello from Dhar\!\\n"  
@@ -463,6 +476,7 @@ task core():
 
     lock exit\_msg: str \= "Done.\\n"  
     sys 1, 1, exit\_msg, 6
+```
 
 ## **🏛️ Author & Licensing**
 

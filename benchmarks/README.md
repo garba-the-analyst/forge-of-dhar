@@ -1,49 +1,59 @@
 # **Dhar Objective Benchmark Suite & Telemetry Architecture**
 
-This documentation covers the automated comparative benchmarking suite for Dhar[cite: 18]. It is designed to rigorously evaluate Dhar's execution speed, memory efficiency, and hardware throughput against various compiled system languages, interpreted runtimes, and JIT engines[cite: 18].
+This documentation covers the automated comparative benchmarking suite for Dhar. It is designed to rigorously evaluate Dhar's execution speed and hardware throughput against compiled system languages, JIT runtimes, and interpreted engines.
 
 ## **1. How to Run the Benchmark Tests**
 
-The entire benchmarking process is automated via a master Python harness named `orchestrator.py`[cite: 18]. 
+The entire benchmarking process is automated via a master Python harness named `orchestrator.py`.
 
-*   **Execution Command:** To run the full suite, execute the Python script from your terminal using `python3 orchestrator.py`[cite: 9].
-*   **Build Phase:** The orchestrator will automatically compile the source code for all target languages (such as invoking `gcc`, `g++`, `rustc`, and `javac`)[cite: 9].
-*   **Telemetry Generation:** After building, the script runs the benchmarking matrix using `hyperfine`[cite: 9].
-*   **Output:** The raw execution traces and JSON telemetry outputs are automatically exported and stored in the `benchmarks/results/` directory[cite: 9, 18].
+*   **Execution Command:** To run the full suite, execute the Python script from your terminal using `python3 orchestrator.py`.
+*   **Build Phase:** The orchestrator will automatically compile the source code for all target languages (such as invoking `gcc`, `g++`, `rustc`, and `javac`). The Dhar workload is compiled by the freshly built Stage 0 engine (`./build/dharc`) before timing begins.
+*   **Telemetry Generation:** After building, the script runs the benchmarking matrix using `hyperfine`.
+*   **Output:** The raw execution traces and JSON telemetry outputs are automatically exported and stored in the `benchmarks/results/` directory.
+
+**Prerequisites:** `python3`, `hyperfine`, `nasm`, `ld`, `gcc`, `g++`, `rustc`, `javac`/`java`, `node`, `php`, `taskset`.
 
 ## **2. Engineering Methodology & Environmental Isolation**
 
 To prevent architectural bias, CPU frequency scaling variance, or operating system jitter, the framework enforces the following controls:
 
-*   **Core Pinning:** All workloads are executed with the `taskset -c 1` command[cite: 9, 18]. This strictly locks execution to a single physical CPU core, preventing the Linux scheduler from migrating threads and eliminating cross-socket latency and cache invalidation overhead[cite: 18].
-*   **Statistical Rigor:** The orchestrator uses the `hyperfine` tool to prevent anomalies from single-run timings[cite: 18]. Each test includes a mandatory 3-run warm-up phase to populate caches, followed by 100 consecutive runs to compute accurate statistical metrics[cite: 9, 18].
-*   **Zero-Interference:** Testing is executed in a clean user-space workspace with minimized background daemons[cite: 18].
+*   **Core Pinning:** All workloads are executed with the `taskset -c 1` command. This strictly locks execution to a single physical CPU core, preventing the Linux scheduler from migrating threads and eliminating cross-socket latency and cache invalidation overhead.
+*   **Statistical Rigor:** The orchestrator uses the `hyperfine` tool to prevent anomalies from single-run timings. Each test includes a mandatory 3-run warm-up phase to populate caches, followed by 100 consecutive runs to compute accurate statistical metrics.
+*   **Measurement Noise Floor (Honesty Note):** At single-digit-millisecond scale, process startup and scheduler jitter contribute significantly to observed timings. For the compiled tier this yields a standard deviation on the same order as the mean; **medians are the more stable indicator** for sub-10 ms entries. Rankings within the native tier should be treated as directional rather than exact.
 
 ## **3. The Standardized Workload Algorithm**
 
-To ensure absolute parity, every language competitor executes an identical computational workload, which acts as a high-throughput byte-stream buffer iteration simulator[cite: 18].
+To ensure absolute parity, every language competitor executes an identical computational workload: a high-throughput delimiter-scanning simulation modeled on lexer token parsing.
 
-*   **Iteration Scale:** The workload performs 16 outer loop cycles[cite: 18].
-*   **Window Size:** Each cycle evaluates a 65,536-byte threshold[cite: 18].
-*   **Conditionals:** The algorithm scans byte values for ASCII whitespace delimiters (specifically 32 for space and 10 for newline) to simulate real-world lexer token parsing performance[cite: 18].
+*   **Iteration Scale:** 16 outer loop cycles x 65,536 inner iterations = **1,048,576 total condition evaluations** per run.
+*   **Simulated Stream:** An 8-bit counter cycles through values 0-255 per iteration (wraparound via explicit comparison), emulating a byte stream without requiring an actual buffer allocation.
+*   **Conditionals:** Each iteration evaluates nested equality checks against ASCII whitespace delimiters (32 = space, 10 = newline) and increments a token counter on match.
+*   **Parity Check:** All implementations perform identical branch structure, arithmetic, and counter updates; only the host language differs.
 
-## **4. Comprehensive Performance Leaderboard**
+Workload sources: `benchmarks/workloads/test.dhar`, `test.c`, `test.cpp`, `test.rs`, `Test.java`, `test.js`, `test.php`, `test.py`.
 
-Based on the aggregated telemetry dataset derived from 100 rigorous iterations per language, here are the final performance rankings:
+## **4. Comprehensive Performance Leaderboard (V0.2.3)**
 
-| Rank | Language / Runtime | Mean Execution Time | Standard Deviation (σ) | Source Telemetry |
-| :--- | :--- | :--- | :--- | :--- |
-| **1** | **Dhar (Native x86_64)** | 1.1 ms[cite: 10, 18] | ± 1.1 ms[cite: 18] | `dhar_native_3.json`[cite: 18] |
-| **2** | **C (Raw -nostdlib)** | 1.5 ms[cite: 11, 18] | ± 1.0 ms[cite: 18] | `c_raw__nostdlib_3.json`[cite: 18] |
-| **3** | **Rust (Release)** | 2.6 ms[cite: 13, 18] | ± 0.8 ms[cite: 18] | `rust_release_4.json`[cite: 18] |
-| **4** | **C++ (Optimized -O3)** | 5.5 ms[cite: 12, 18] | ± 2.6 ms[cite: 18] | `cpp_optimized_4.json`[cite: 18] |
-| **5** | **Node.js (JavaScript)** | 72.9 ms[cite: 16, 18] | ± 11.3 ms[cite: 18] | `node.js_javascript_4.json`[cite: 18] |
-| **6** | **PHP 8.3 (CLI)** | 101.6 ms[cite: 17, 18] | ± 46.9 ms[cite: 18] | `php.json`[cite: 18] |
-| **7** | **Java (OpenJDK)** | 107.3 ms[cite: 14, 18] | ± 7.2 ms[cite: 18] | `java_openjdk_4.json`[cite: 18] |
-| **8** | **Python 3** | 140.8 ms[cite: 15, 18] | ± 65.2 ms[cite: 18] | `python_4.json`[cite: 18] |
+Aggregated telemetry from 100 timed runs per language after the V0.2.3 codegen correctness fix:
+
+| Rank | Language / Runtime | Mean | Median | Std Dev (σ) | Index vs C | Source Telemetry |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **1** | C (Raw -nostdlib -O3) | 1.58 ms | 0.47 ms | ±2.91 ms | 1.00x (Baseline) | `c_raw__nostdlib.json` |
+| **2** | C++ (Optimized -O3) | 2.32 ms | 0.90 ms | ±5.21 ms | ~1.5x slower | `cpp_optimized.json` |
+| **3** | Rust (Release) | 2.61 ms | 2.06 ms | ±1.78 ms | ~1.7x slower | `rust_release.json` |
+| **4** | **Dhar (Native x86_64)** | **8.40 ms** | **7.28 ms** | **±4.93 ms** | **~5.3x slower** | `dhar_native.json` |
+| **5** | Node.js (JavaScript) | 98.5 ms | 85.1 ms | ±55.7 ms | ~62x slower | `node.js_javascript.json` |
+| **6** | PHP 8.3 (CLI) | 110.6 ms | 92.5 ms | ±75.9 ms | ~70x slower | `php.json` |
+| **7** | Java (OpenJDK) | 165.1 ms | 122.2 ms | ±142.1 ms | ~104x slower | `java_openjdk.json` |
+| **8** | Python 3 | 180.6 ms | 148.1 ms | ±92.2 ms | ~114x slower | `python.json` |
 
 ## **5. Architectural Findings & Conclusion**
 
-*   **Sub-2-Millisecond Execution:** Dhar achieves a mean execution profile of 1.1 ms, allowing it to match and fractionally outpace hand-crafted bare-metal C (`-nostdlib`) and production-release Rust builds[cite: 10, 11, 13, 18].
-*   **Zero Abstraction Tax:** Dhar's performance is attributed to compiling directly into native x86_64 machine code and invoking Linux kernel system calls directly[cite: 18]. It completely avoids standard library wrappers, garbage collection overhead, and intermediate runtime layers, pushing its execution footprint to the absolute hardware ceiling[cite: 18].
-*   **Tiered Efficiency:** The telemetry clearly demarcates elite compiled system languages (executing in $\le 5\text{ ms}$) from JIT and interpreted engines (executing in $\ge 70\text{ ms}$)[cite: 18]. This validates Dhar's position as a premier high-performance systems engineering language[cite: 18].
+*   **Native-Tier Placement:** Dhar executes this branchy scalar workload at native-tier speed with **zero optimization passes** — roughly 5x behind auto-vectorized `-O3` C, and an order of magnitude ahead of V8, JVM, PHP, and CPython.
+*   **Why the Gap to C Is Expected:** The Stage 0 engine emits naive scalar assembly. Every variable is memory-resident (.bss), there is no register allocation, no instruction scheduling, no strength reduction, and no SIMD auto-vectorization. GCC heavily vectorizes this specific scan loop; Dhar performs one comparison and one memory round-trip per iteration. Closing this gap is post-bootstrap work (register allocation, peephole passes), not a limitation of the language design.
+*   **Zero Abstraction Tax Still Applies:** Dhar's numbers are achieved with no standard library, no runtime layer, no GC, and direct kernel syscalls — a ~10 KB static binary versus multi-megabyte JIT runtime footprints.
+*   **Tiered Efficiency:** The telemetry clearly demarcates AOT-compiled languages (< 10 ms) from JIT and interpreted engines (> 60 ms). Dhar sits unambiguously in the former tier.
+
+## **6. Telemetry Changelog**
+
+*   **V0.2.3 (current):** Fixed inverted conditional-jump codegen for relational operators (`<`, `>`, `<=`, `>=`) in `span`/`when` conditions, added operator-aware jump selection (`==`, `!=`, `<`, `>`, `<=`, `>=`) and variable-to-variable memory comparison in conditions. Pre-V0.2.3 telemetry was invalid: the benchmark workload's `span <` loops silently never executed, so earlier published results (e.g., "Dhar 1.1 ms, faster than C") measured a program that performed no work. All leaderboards in this document supersede prior publications.
