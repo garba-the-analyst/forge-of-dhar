@@ -31,7 +31,8 @@ section .data
     ; V0.1 NEW PRIMITIVES
     kw_peek db "peek", 0
     kw_sysret db "sysret", 0
-
+    kw_poke db "poke", 0
+    kw_give db "give", 0
     ; TARGET TRIPLE STRINGS
     str_target_linux db "--target=linux", 0
     str_target_windows db "--target=windows", 0
@@ -161,6 +162,14 @@ section .data
     len_asm_sub_rax_l equ $ - asm_sub_rax_l
     asm_sub_rax_lit db "    sub rax, "
     len_asm_sub_rax_lit equ $ - asm_sub_rax_lit
+    asm_mov_r8_l db "    mov r8, qword ["
+    len_asm_mov_r8_l equ $ - asm_mov_r8_l
+    asm_mov_r9_l db "    mov r9, qword ["
+    len_asm_mov_r9_l equ $ - asm_mov_r9_l
+    asm_mov_r8_lit db "    mov r8, "
+    len_asm_mov_r8_lit equ $ - asm_mov_r8_lit
+    asm_mov_r9_lit db "    mov r9, "
+    len_asm_mov_r9_lit equ $ - asm_mov_r9_lit
     asm_mov_rcx_lit db "    mov rcx, "
     len_asm_mov_rcx_lit equ $ - asm_mov_rcx_lit
     asm_mov_rcx_l db "    mov rcx, qword ["
@@ -182,6 +191,21 @@ section .data
     asm_syscall db "    syscall", 10
     len_asm_syscall equ $ - asm_syscall
 
+    ; --- V0.3.0 Strength-reduction folds ---
+    asm_inc db "    inc qword ["
+    len_asm_inc equ $ - asm_inc
+    asm_dec db "    dec qword ["
+    len_asm_dec equ $ - asm_dec
+    kw_one db "1", 0
+
+    ; --- V0.3.0 Multiplicative op sequences (op2 preloaded in rcx) ---
+    asm_mul_line db "    imul rax, rcx", 10
+    len_asm_mul_line equ $ - asm_mul_line
+    asm_div_seq db "    cqo", 10, "    idiv rcx", 10
+    len_asm_div_seq equ $ - asm_div_seq
+    asm_mod_fix db "    mov rax, rdx", 10
+    len_asm_mod_fix equ $ - asm_mod_fix
+
     ; --- V0.1 Peek & Sysret Assembly Generation Strings ---
     asm_peek_1 db "    mov rax, qword ["
     len_asm_peek_1 equ $ - asm_peek_1
@@ -196,6 +220,44 @@ section .data
     len_asm_sysret_1 equ $ - asm_sysret_1
     asm_sysret_2 db "], rax", 10
     len_asm_sysret_2 equ $ - asm_sysret_2
+
+    ; --- V0.3.0 Poke: byte-granular store (poke buffer, index, value) ---
+    asm_poke_store db "    mov byte [rsi + rax], cl", 10
+    len_asm_poke_store equ $ - asm_poke_store
+
+    ; --- V0.3.0 Stack frames ---
+    asm_rbp_prefix db "rbp-"
+    len_asm_rbp_prefix equ $ - asm_rbp_prefix
+    asm_prologue db "    push rbp", 10, "    mov rbp, rsp", 10, "    sub rsp, "
+    len_asm_prologue equ $ - asm_prologue
+    asm_epilogue db "    mov rsp, rbp", 10, "    pop rbp", 10, "    ret", 10
+    len_asm_epilogue equ $ - asm_epilogue
+    asm_tret_label db ".L_TRET_"
+    len_asm_tret_label equ $ - asm_tret_label
+    asm_jmp_tret db "    jmp .L_TRET_"
+    len_asm_jmp_tret equ $ - asm_jmp_tret
+    asm_lea_rsi_open db "    lea rsi, ["
+    len_asm_lea_rsi_open equ $ - asm_lea_rsi_open
+    asm_xor_eax db "    xor eax, eax", 10
+    len_asm_xor_eax equ $ - asm_xor_eax
+    asm_lea_rdi_open db "    lea rdi, ["
+    len_asm_lea_rdi_open equ $ - asm_lea_rdi_open
+    asm_lea_rdx_open db "    lea rdx, ["
+    len_asm_lea_rdx_open equ $ - asm_lea_rdx_open
+    asm_spill_q db "    mov qword [rbp-"      ; + off + "], reg"
+    len_asm_spill_q equ $ - asm_spill_q
+    asm_spill_close_rdi db "], rdi", 10
+    len_asm_spill_close_rdi equ $ - asm_spill_close_rdi
+    asm_spill_close_rsi db "], rsi", 10
+    len_asm_spill_close_rsi equ $ - asm_spill_close_rsi
+    asm_spill_close_rdx db "], rdx", 10
+    len_asm_spill_close_rdx equ $ - asm_spill_close_rdx
+    asm_spill_close_rcx db "], rcx", 10
+    len_asm_spill_close_rcx equ $ - asm_spill_close_rcx
+    asm_spill_close_r8 db "], r8", 10
+    len_asm_spill_close_r8 equ $ - asm_spill_close_r8
+    asm_spill_close_r9 db "], r9", 10
+    len_asm_spill_close_r9 equ $ - asm_spill_close_r9
 
     asm_munmap_1 db "    ; --- Scope Cleanup (Neutered for V0) ---", 10, "    ; mov rax, 11", 10, "    ; mov rdi, "
     len_asm_munmap_1 equ $ - asm_munmap_1
@@ -223,6 +285,21 @@ section .bss
     current_indent resw 1
     current_line resd 1
     target_os_flag resq 1           ; 0 = Linux, 1 = Windows PE, 2 = WASI
+    last_token_type resb 1          ; V0.3.0 unary-minus detection
+
+    ; --- V0.3.0 Stack-frame machinery ---
+    frame_offsets resq 256          ; per-task frame sizes (bytes), 1-indexed
+    task_frame_count resq 1
+    scan_in_task resq 1
+    scan_task_indent resd 1
+    scan_task_id resq 1
+    scan_frame_off resq 1
+    cg_cur_task resq 1              ; codegen current task ordinal
+    ecs_callee_tok resq 1           ; V0.3.0 callee token ptr during call emission
+    cg_ret_label resq 1             ; label id of current task's epilogue
+    in_task_flag resb 1
+    parse_task_counter resq 1       ; V0.3.0 scoping: task ordinal at parse time
+    cur_owner resq 1                ; V0.3.0 scoping: current declaration owner
 
 section .text
     global _start
@@ -272,6 +349,7 @@ _start:
     mov byte [is_line_start], 1
     mov qword [cf_sp], 0
     mov qword [label_id_counter], 1
+    mov byte [last_token_type], 0
 
     mov rax, 2              
     mov rdi, r12      
@@ -354,6 +432,12 @@ _start:
     je .handle_gt
     cmp al, 33                      ; '!'
     je .handle_bang
+    cmp al, 42                      ; '*'
+    je .handle_star
+    cmp al, 47                      ; '/'
+    je .handle_slash
+    cmp al, 37                      ; '%'
+    je .handle_percent
 
     mov rdi, word_buffer
     mov rcx, [word_len]
@@ -438,8 +522,43 @@ _start:
     jmp .next_char
 .handle_minus:
     call process_current_word
+    ; --- V0.3.0: unary minus (negative literal) when previous token is
+    ;     start-of-stream(0) or an operator/punctuator(3):  = -5 | < -3 | , -2
+    mov cl, [last_token_type]
+    cmp cl, 3
+    je .unary_minus
+    cmp cl, 0
+    je .unary_minus
     mov r8b, 3
     mov r9b, 7                  
+    xor r10, r10
+    call store_token
+    inc rsi
+    jmp .next_char
+.unary_minus:
+    mov rdi, word_buffer
+    mov qword [word_len], 0
+    mov byte [rdi], '-'
+    mov qword [word_len], 1
+.um_digit_loop:
+    inc rsi
+    mov al, [rsi]
+    cmp al, '0'
+    jb .um_scan_done
+    cmp al, '9'
+    ja .um_scan_done
+    mov rcx, [word_len]
+    mov [rdi + rcx], al
+    inc qword [word_len]
+    jmp .um_digit_loop
+.um_scan_done:
+    cmp qword [word_len], 1         ; bare '-' with no digits -> binary op token
+    je .um_emit_op
+    call process_current_word       ; flush "-N" as numeric literal
+    jmp .next_char
+.um_emit_op:
+    mov r8b, 3
+    mov r9b, 7
     xor r10, r10
     call store_token
     inc rsi
@@ -523,6 +642,34 @@ _start:
     inc qword [word_len]
     inc rsi
     jmp .next_char
+
+; --- V0.3.0: Multiplicative operators ---
+; Operator subtypes: 16='*', 17='/', 18='%'
+.handle_star:
+    call process_current_word
+    mov r8b, 3
+    mov r9b, 16
+    xor r10, r10
+    call store_token
+    inc rsi
+    jmp .next_char
+.handle_slash:
+    call process_current_word
+    mov r8b, 3
+    mov r9b, 17
+    xor r10, r10
+    call store_token
+    inc rsi
+    jmp .next_char
+.handle_percent:
+    call process_current_word
+    mov r8b, 3
+    mov r9b, 18
+    xor r10, r10
+    call store_token
+    inc rsi
+    jmp .next_char
+
 .start_comment:
     call process_current_word
 .comment_loop:
@@ -639,11 +786,57 @@ run_parser:
     je .check_peek_stmt
     cmp r9b, 9
     je .check_sysret_stmt
+    cmp r9b, 10                     ; poke
+    je .check_poke_stmt
+    cmp r9b, 11                     ; give
+    je .check_give_stmt
     jmp .next_token
 
 .check_peek_stmt:
     add rcx, 5
     jmp .next_token
+.check_poke_stmt:
+    add rcx, 5                      ; poke buf, idx, val -> 6 tokens total
+    jmp .next_token
+
+.check_give_stmt:
+    ; V0.3.0: 'give' optionally carries one same-line operand.
+    ; Accounting: leave rcx on LAST consumed token; .next_token supplies the
+    ; final increment (bare = net 1, with operand = net 2).
+    mov rax, rcx
+    inc rax
+    cmp rax, [token_count]
+    jge .next_token                 ; bare give
+    shl rax, 4
+    lea r12, [token_array + rax]
+    mov edx, [rbx + 4]              ; line of 'give'
+    cmp edx, [r12 + 4]
+    jne .next_token                 ; operand on next line -> bare
+    cmp byte [r12], 2               ; identifier
+    je .check_give_operand_ok
+    cmp byte [r12], 5               ; number
+    je .check_give_operand_ok
+    jmp .next_token
+.check_give_operand_ok:
+    ; reject calls as return values for now (ident followed by '(')
+    mov rax, rcx
+    add rax, 2
+    cmp rax, [token_count]
+    jge .give_consume_operand
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 3
+    jne .give_consume_operand
+    cmp byte [r12 + 1], 2           ; '(' -> unsupported call-return
+    je .err_give_call
+.give_consume_operand:
+    add rcx, 1                      ; point at operand
+    jmp .next_token
+
+.err_give_call:
+    mov rsi, msg_err_syntax
+    mov rdx, len_err_syntax
+    jmp .print_syntax_err
 .check_sysret_stmt:
     add rcx, 1
     jmp .next_token
@@ -701,6 +894,9 @@ run_parser:
     mov r8b, 3                      
     mov r9b, 0                      
     call add_symbol
+    inc qword [parse_task_counter]
+    mov rax, [parse_task_counter]
+    mov [cur_owner], rax            ; V0.3.0: body decls owned by this task
     add rcx, 1                      
 
     mov rax, rcx
@@ -902,7 +1098,7 @@ run_parser:
     add rdi, 2                      
 
 .finish_var_decl:
-    call check_symbol_collision
+    call check_symbol_collision_scoped
     cmp rax, 1
     je .err_redeclared
 
@@ -937,7 +1133,54 @@ run_parser:
     call find_symbol
     cmp rax, 0
     je .err_undeclared
-    add rcx, 2                      
+
+    ; V0.3.0: validate full argument list (max 6, System V registers)
+    mov r8, rcx
+    inc r8
+    inc r8                          ; '(' index
+    cmp r8, [token_count]
+    jge .err_syntax
+    xor r9, r9                      ; arg count
+    xor r10, r10                    ; paren depth
+.vtc_walk:
+    inc r8
+    cmp r8, [token_count]
+    jge .err_syntax
+    mov rax, r8
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 3
+    je .vtc_op
+    cmp byte [r12], 2               ; identifier arg
+    je .vtc_arg
+    cmp byte [r12], 5               ; numeric literal
+    je .vtc_arg
+    cmp byte [r12], 6               ; string literal
+    je .vtc_arg
+    jmp .err_syntax
+.vtc_arg:
+    inc r9
+    cmp r9, 6
+    jg .err_syntax
+    jmp .vtc_walk
+.vtc_op:
+    cmp byte [r12 + 1], 2
+    jne .vtc_nopen
+    inc r10
+    jmp .vtc_walk
+.vtc_nopen:
+    cmp byte [r12 + 1], 3
+    jne .vtc_nclose
+    cmp r10, 0
+    je .vtc_close                   ; our closing paren
+    dec r10
+    jmp .vtc_walk
+.vtc_nclose:
+    cmp byte [r12 + 1], 10          ; ','
+    jne .err_syntax
+    jmp .vtc_walk
+.vtc_close:
+    mov rcx, r8                     ; park on ')': .next_token completes consumption
     jmp .next_token
 
 .valid_assign:
@@ -1049,12 +1292,195 @@ run_parser:
     call print_num
     ret
 
+
+; ------------------------------------------------------------------------------
+; V0.3.0 emit_call_sequence: rcx = callee identifier token index.
+; Loads up to 6 args into rdi,rsi,rdx,rcx,r8,r9 then emits `call <name>`.
+; Returns r11 = index of the closing ')' token. Preserves rbx.
+; ------------------------------------------------------------------------------
+emit_call_sequence:
+    push r10
+    push r9
+    push r13
+    mov rax, rcx                    ; V0.3.0: resolve callee token by INDEX
+    shl rax, 4                      ; (rbx is the DEST token in assign context!)
+    lea rax, [token_array + rax]
+    mov [ecs_callee_tok], rax
+    mov r10, rcx
+    inc r10
+    inc r10                         ; '('
+    xor r9, r9                      ; ordinal
+    xor r8, r8                      ; paren depth
+.ecs_walk:
+    inc r10
+    cmp r10, [token_count]
+    jge .ecs_done                   ; malformed call: bail out gracefully
+    mov rax, r10
+    shl rax, 4
+    lea r13, [token_array + rax]
+    cmp byte [r13], 3
+    je .ecs_op
+    cmp r9, 6
+    jge .ecs_walk                   ; beyond 6 args: parser rejects earlier
+    cmp byte [r13], 5
+    je .ecs_lit
+    cmp byte [r13], 6
+    je .ecs_str
+    cmp byte [r13], 2               ; must be a real identifier
+    jne .ecs_done                   ; anything else -> stop gracefully
+    ; identifier arg -> memory LOAD: mov <reg>, qword [name|rbp-N]
+    mov rax, r9
+    call .ecs_reg_mem_open          ; "    mov <reg>, qword ["
+    call write_to_file
+    push r9
+    mov rdi, [r13 + 8]
+    call emit_named_operand
+    pop r9
+    mov rsi, asm_close_bracket_nl
+    mov rdx, len_asm_close_bracket_nl
+    call write_to_file
+    jmp .ecs_next
+.ecs_lit:
+    mov rax, r9
+    call .ecs_reg_prefix
+    call write_to_file
+    mov rdi, [r13 + 8]
+    call get_strlen
+    mov rdx, rax
+    mov rsi, rdi
+    call write_to_file
+    mov rsi, newline
+    mov rdx, 1
+    call write_to_file
+    jmp .ecs_next
+.ecs_str:
+    mov rax, r9
+    call .ecs_reg_prefix
+    call write_to_file
+    mov rsi, asm_str_prefix
+    mov rdx, len_asm_str_prefix
+    call write_to_file
+    mov rax, r10
+    call write_rax_to_file
+    mov rsi, newline
+    mov rdx, 1
+    call write_to_file
+    jmp .ecs_next
+.ecs_next:
+    inc r9
+    jmp .ecs_walk
+.ecs_op:
+    cmp byte [r13 + 1], 2
+    jne .ecs_nopen
+    inc r8                          ; paren depth (r8 unused otherwise)
+    jmp .ecs_walk
+.ecs_nopen:
+    cmp byte [r13 + 1], 3
+    jne .ecs_nclose
+    cmp r8, 0
+    je .ecs_done                    ; our closing paren
+    dec r8
+    jmp .ecs_walk
+.ecs_nclose:
+    jmp .ecs_walk                   ; commas ignored
+.ecs_done:
+    mov rsi, asm_call
+    mov rdx, len_asm_call
+    call write_to_file
+    mov r13, [ecs_callee_tok]
+    mov rdi, [r13 + 8]
+    call get_strlen
+    mov rdx, rax
+    mov rsi, rdi
+    call write_to_file
+    mov rsi, newline
+    mov rdx, 1
+    call write_to_file
+    mov r11, r10
+    pop r13
+    pop r9
+    pop r10
+
+    ret
+
+; internal: rax = ordinal -> rsi/rdx = "    mov <reg>, qword [" 
+.ecs_reg_mem_open:
+    cmp rax, 0
+    je .ecsm_rdi
+    cmp rax, 1
+    je .ecsm_rsi
+    cmp rax, 2
+    je .ecsm_rdx
+    cmp rax, 3
+    je .ecsm_rcx
+    cmp rax, 4
+    je .ecsm_r8m
+    mov rsi, asm_mov_r9_l
+    mov rdx, len_asm_mov_r9_l
+    ret
+.ecsm_rdi:
+    mov rsi, asm_mov_rdi_l
+    mov rdx, len_asm_mov_rdi_l
+    ret
+.ecsm_rsi:
+    mov rsi, asm_mov_rsi_l
+    mov rdx, len_asm_mov_rsi_l
+    ret
+.ecsm_rdx:
+    mov rsi, asm_mov_rdx_l
+    mov rdx, len_asm_mov_rdx_l
+    ret
+.ecsm_rcx:
+    mov rsi, asm_mov_rcx_l
+    mov rdx, len_asm_mov_rcx_l
+    ret
+.ecsm_r8m:
+    mov rsi, asm_mov_r8_l
+    mov rdx, len_asm_mov_r8_l
+    ret
+
+; internal: rax = ordinal -> rsi/rdx = "<reg>, " immediate prefix
+.ecs_reg_prefix:
+    cmp rax, 0
+    je .ecsr_rdi
+    cmp rax, 1
+    je .ecsr_rsi
+    cmp rax, 2
+    je .ecsr_rdx
+    cmp rax, 3
+    je .ecsr_rcx
+    cmp rax, 4
+    je .ecsr_r8
+    mov rsi, asm_mov_r9_lit
+    mov rdx, len_asm_mov_r9_lit
+    ret
+.ecsr_rdi:
+    mov rsi, asm_mov_rdi_lit
+    mov rdx, len_asm_mov_rdi_lit
+    ret
+.ecsr_rsi:
+    mov rsi, asm_mov_rsi_lit
+    mov rdx, len_asm_mov_rsi_lit
+    ret
+.ecsr_rdx:
+    mov rsi, asm_mov_rdx_lit
+    mov rdx, len_asm_mov_rdx_lit
+    ret
+.ecsr_rcx:
+    mov rsi, asm_mov_rcx_lit
+    mov rdx, len_asm_mov_rcx_lit
+    ret
+.ecsr_r8:
+    mov rsi, asm_mov_r8_lit
+    mov rdx, len_asm_mov_r8_lit
 run_codegen:
     mov rax, 1
     mov rdi, 1
     mov rsi, msg_gen_start
     mov rdx, len_gen_start
     syscall
+
+    call precompute_frames         ; V0.3.0: mark locals + rbp offsets before emission
 
     mov rax, 2
     mov rdi, out_file
@@ -1121,6 +1547,8 @@ run_codegen:
     je .bss_skip
     cmp byte [rbx + 8], 5           
     je .bss_skip
+    test byte [rbx + 9], 0x80       ; V0.3.0: stack locals are not globals
+    jnz .bss_skip
 
     mov rdi, [rbx]          
     call get_strlen
@@ -1202,7 +1630,8 @@ run_codegen:
     call emit_jmp_start
     jmp .not_when_close
 .task_close:
-    call emit_ret                   
+    mov byte [in_task_flag], 0
+    call emit_task_epilogue                   
     jmp .do_cleanup
 .not_span_close:
     cmp r13, 1
@@ -1240,6 +1669,114 @@ run_codegen:
     je .handle_peek
     cmp byte [rbx + 1], 9
     je .handle_sysret
+    cmp byte [rbx + 1], 10          ; poke
+    je .handle_poke
+    cmp byte [rbx + 1], 11          ; give
+    je .handle_give
+    jmp .text_skip
+
+.handle_poke:
+    ; poke buf, idx, val : buf@+1, idx@+3, val@+5
+    ; load index into rax
+    mov rax, rcx
+    add rax, 3
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 5
+    je .pk_idx_lit
+    mov rsi, asm_mov_rax_l
+    mov rdx, len_asm_mov_rax_l
+    call write_to_file
+    mov rdi, [r12 + 8]
+    call emit_named_operand
+    mov rsi, asm_close_bracket_nl
+    mov rdx, len_asm_close_bracket_nl
+    call write_to_file
+    jmp .pk_buf
+.pk_idx_lit:
+    mov rsi, asm_mov_rax_lit
+    mov rdx, len_asm_mov_rax_lit
+    call write_to_file
+    mov rdi, [r12 + 8]
+    call get_strlen
+    mov rdx, rax
+    mov rsi, rdi
+    call write_to_file
+    mov rsi, newline
+    mov rdx, 1
+    call write_to_file
+.pk_buf:
+    ; base address of buffer into rsi (V0.3.0: lea for locals)
+    mov rax, rcx
+    inc rax
+    shl rax, 4
+    lea r12, [token_array + rax]
+    mov rdi, [r12 + 8]
+    mov r13, rdi
+    call find_symbol
+    cmp rax, 1
+    jne .pk_buf_global
+    test byte [rdx + 9], 0x80
+    jz .pk_buf_global
+    push rdx
+    mov rsi, asm_lea_rsi_open
+    mov rdx, len_asm_lea_rsi_open
+    call write_to_file
+    pop rdx
+    push rdx
+    mov rsi, asm_rbp_prefix
+    mov rdx, len_asm_rbp_prefix
+    call write_to_file
+    pop rdx
+    mov eax, [rdx + 16]
+    call write_rax_to_file
+    mov rsi, asm_close_bracket_nl   ; lea closes with plain "]"
+    mov rdx, len_asm_close_bracket_nl
+    call write_to_file
+    jmp .pk_val
+.pk_buf_global:
+    mov rsi, asm_mov_rsi_lit
+    mov rdx, len_asm_mov_rsi_lit
+    call write_to_file
+    mov rdi, [r12 + 8]
+    call emit_named_operand
+    mov rsi, newline
+    mov rdx, 1
+    call write_to_file
+.pk_val:
+    ; value into rcx
+    mov rax, rcx
+    add rax, 5
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 5
+    je .pk_val_lit
+    mov rsi, asm_mov_rcx_l
+    mov rdx, len_asm_mov_rcx_l
+    call write_to_file
+    mov rdi, [r12 + 8]
+    call emit_named_operand
+    mov rsi, asm_close_bracket_nl
+    mov rdx, len_asm_close_bracket_nl
+    call write_to_file
+    jmp .pk_emit
+.pk_val_lit:
+    mov rsi, asm_mov_rcx_lit
+    mov rdx, len_asm_mov_rcx_lit
+    call write_to_file
+    mov rdi, [r12 + 8]
+    call get_strlen
+    mov rdx, rax
+    mov rsi, rdi
+    call write_to_file
+    mov rsi, newline
+    mov rdx, 1
+    call write_to_file
+.pk_emit:
+    mov rsi, asm_poke_store
+    mov rdx, len_asm_poke_store
+    call write_to_file
+    add rcx, 5          
     jmp .text_skip
 
 .handle_peek:
@@ -1247,29 +1784,71 @@ run_codegen:
     add rax, 5
     shl rax, 4
     lea r12, [token_array + rax] 
-    
+
+    ; V0.3.0: index operand may be literal or variable
+    cmp byte [r12], 5
+    je .peek_idx_lit
     mov rsi, asm_peek_1
     mov rdx, len_asm_peek_1
+    call write_to_file
+    mov rdi, [r12 + 8]
+    call emit_named_operand
+    mov rsi, asm_close_bracket_nl
+    mov rdx, len_asm_close_bracket_nl
+    call write_to_file
+    jmp .peek_buf_emit
+.peek_idx_lit:
+    mov rsi, asm_mov_rax_lit
+    mov rdx, len_asm_mov_rax_lit
     call write_to_file
     mov rdi, [r12 + 8] 
     call get_strlen
     mov rdx, rax
     mov rsi, rdi
     call write_to_file
-    
-    mov rsi, asm_peek_2
-    mov rdx, len_asm_peek_2
+    mov rsi, newline
+    mov rdx, 1
     call write_to_file
 
+.peek_buf_emit:
     mov rax, rcx
     add rax, 3
     shl rax, 4
     lea r12, [token_array + rax] 
-    
-    mov rdi, [r12 + 8] 
-    call get_strlen
-    mov rdx, rax
-    mov rsi, rdi
+
+    ; V0.3.0: local buffers are frame-resident -> lea rsi, [rbp-N]
+    mov rdi, [r12 + 8]
+    mov r13, rdi
+    call find_symbol
+    cmp rax, 1
+    jne .peek_buf_global
+    test byte [rdx + 9], 0x80
+    jz .peek_buf_global
+    push rdx
+    mov rsi, asm_lea_rsi_open
+    mov rdx, len_asm_lea_rsi_open
+    call write_to_file
+    pop rdx
+    push rdx
+    mov rsi, asm_rbp_prefix
+    mov rdx, len_asm_rbp_prefix
+    call write_to_file
+    pop rdx
+    mov eax, [rdx + 16]
+    call write_rax_to_file
+    mov rsi, asm_close_bracket_nl   ; lea closes with plain "]"
+    mov rdx, len_asm_close_bracket_nl
+    jmp .peek_buf_written
+.peek_buf_global:
+    mov rsi, asm_mov_rsi_lit
+    mov rdx, len_asm_mov_rsi_lit
+    call write_to_file
+    mov rdi, [r12 + 8]
+    mov r13, rdi
+    call emit_named_operand
+    mov rsi, newline
+    mov rdx, 1
+.peek_buf_written:
     call write_to_file
 
     mov rsi, asm_peek_3
@@ -1282,10 +1861,7 @@ run_codegen:
     lea r12, [token_array + rax] 
     
     mov rdi, [r12 + 8] 
-    call get_strlen
-    mov rdx, rax
-    mov rsi, rdi
-    call write_to_file
+    call emit_named_operand
 
     mov rsi, asm_peek_4
     mov rdx, len_asm_peek_4
@@ -1305,10 +1881,8 @@ run_codegen:
     call write_to_file
     
     mov rdi, [r12 + 8]
-    call get_strlen
-    mov rdx, rax
-    mov rsi, rdi
-    call write_to_file
+    
+    call emit_named_operand
     
     mov rsi, asm_sysret_2
     mov rdx, len_asm_sysret_2
@@ -1356,11 +1930,8 @@ run_codegen:
     mov rsi, asm_mov1
     mov rdx, len_asm_mov1
     call write_to_file
-    mov rdi, [r8 + 8]      
-    call get_strlen
-    mov rdx, rax
-    mov rsi, rdi
-    call write_to_file
+    mov rdi, [r8 + 8]
+    call emit_named_operand
     mov rsi, asm_mov2
     mov rdx, len_asm_mov2
     call write_to_file
@@ -1411,6 +1982,113 @@ run_codegen:
     mov rdx, len_asm_colon_nl
     call write_to_file
 
+    ; --- V0.3.0 prologue ---
+    inc qword [cg_cur_task]
+    mov rax, [cg_cur_task]
+    mov [cg_ret_label], rax
+    mov byte [in_task_flag], 1
+    push rcx                        ; SAVE token index (rcx is the parse cursor!)
+    mov rsi, asm_prologue
+    mov rdx, len_asm_prologue
+    call write_to_file
+    mov rax, [frame_offsets + rax*8 - 8]  ; frame size for THIS ordinal
+    call write_rax_to_file          ; preserves rcx
+    mov rsi, newline
+    mov rdx, 1
+    call write_to_file
+
+    ; --- V0.3.0 spill params into frame slots ---
+    mov r10, rcx                    ; walker
+    xor r9, r9                      ; ordinal
+    xor r8, r8                      ; paren depth
+.spill_walk:
+    inc r10
+    cmp r10, [token_count]
+    jge .spill_done
+    mov rax, r10
+    shl rax, 4
+    lea r13, [token_array + rax]
+    cmp byte [r13], 3
+    je .spill_op
+    cmp byte [r13], 2               ; parameter identifier
+    jne .spill_walk
+    cmp r8, 1                       ; params live at depth 1 only
+    jne .spill_walk
+    cmp r9, 6                       ; > 6 params unsupported in regs (parser guards)
+    jge .spill_walk_adv
+    mov r14, r13                    ; save token ptr
+    mov rdi, [r13 + 8]
+    mov r13, rdi
+    call find_symbol                ; -> rdx = symbol
+    cmp rax, 1
+    jne .spill_walk_adv
+    mov eax, [rdx + 16]           ; slot distance
+    push r9
+    mov rsi, asm_spill_q            ; "    mov qword [rbp-"
+    mov rdx, len_asm_spill_q
+    call write_to_file
+    pop r9                          ; rax still holds slot offset (write preserves)
+    call write_rax_to_file
+    cmp r9, 0
+    je .sp_close_rdi
+    cmp r9, 1
+    je .sp_close_rsi
+    cmp r9, 2
+    je .sp_close_rdx
+    cmp r9, 3
+    je .sp_close_rcx
+    cmp r9, 4
+    je .sp_close_r8
+    jmp .sp_close_r9
+.sp_close_rdi:
+    mov rsi, asm_spill_close_rdi
+    mov rdx, len_asm_spill_close_rdi
+    jmp .sp_write_close
+.sp_close_rsi:
+    mov rsi, asm_spill_close_rsi
+    mov rdx, len_asm_spill_close_rsi
+    jmp .sp_write_close
+.sp_close_rdx:
+    mov rsi, asm_spill_close_rdx
+    mov rdx, len_asm_spill_close_rdx
+    jmp .sp_write_close
+.sp_close_rcx:
+    mov rsi, asm_spill_close_rcx
+    mov rdx, len_asm_spill_close_rcx
+    jmp .sp_write_close
+.sp_close_r8:
+    mov rsi, asm_spill_close_r8
+    mov rdx, len_asm_spill_close_r8
+    jmp .sp_write_close
+.sp_close_r9:
+    mov rsi, asm_spill_close_r9
+    mov rdx, len_asm_spill_close_r9
+.sp_write_close:
+    call write_to_file
+    inc r9
+    jmp .spill_walk
+.spill_walk_adv:
+    inc r9
+    jmp .spill_walk
+.spill_op:
+    cmp byte [r13 + 1], 2           ; '('
+    jne .sp_op_nopen
+    inc r8
+    jmp .spill_walk
+.sp_op_nopen:
+    cmp byte [r13 + 1], 3           ; ')'
+    jne .sp_op_nclose
+    dec r8
+    jmp .spill_walk
+.sp_op_nclose:
+    cmp byte [r13 + 1], 1           ; ':' at depth 0 ends signature
+    jne .spill_walk
+    cmp r8, 0
+    jne .spill_walk
+    jmp .spill_done
+.spill_done:
+    pop rcx
+
     mov r14, [cf_sp]
     shl r14, 5
     lea r11, [cf_stack + r14]
@@ -1419,17 +2097,31 @@ run_codegen:
     mov [r11 + 8], dx
     mov qword [r11 + 16], 4         
     inc qword [cf_sp]
+    xor r8, r8                      ; paren depth for signature skip
     
 .skip_task_tokens:
+    ; V0.3.0: depth-aware - param type colons must not end the signature
     inc rcx
     mov rax, rcx
     shl rax, 4
     lea r12, [token_array + rax]
     cmp byte [r12], 3               
     jne .skip_task_tokens
-    cmp byte [r12 + 1], 1           
+    cmp byte [r12 + 1], 2           ; '('
+    je .stt_open
+    cmp byte [r12 + 1], 3           ; ')'
+    je .stt_close
+    cmp byte [r12 + 1], 1           ; ':' ends signature only at depth 0
+    jne .skip_task_tokens
+    cmp r8, 0
     jne .skip_task_tokens
     jmp .text_skip
+.stt_open:
+    inc r8
+    jmp .skip_task_tokens
+.stt_close:
+    dec r8
+    jmp .skip_task_tokens
 
 .handle_control_flow:
     mov rax, rcx
@@ -1470,11 +2162,8 @@ run_codegen:
     mov rsi, asm_mov_rax_l
     mov rdx, len_asm_mov_rax_l
     call write_to_file
-    mov rdi, [r12 + 8]              
-    call get_strlen
-    mov rdx, rax
-    mov rsi, rdi
-    call write_to_file
+    mov rdi, [r12 + 8]
+    call emit_named_operand
     mov rsi, asm_close_bracket_nl
     mov rdx, len_asm_close_bracket_nl
     call write_to_file
@@ -1498,11 +2187,8 @@ run_codegen:
     mov rsi, asm_cmp_rax_mem
     mov rdx, len_asm_cmp_rax_mem
     call write_to_file
-    mov rdi, [r13 + 8]              
-    call get_strlen
-    mov rdx, rax
-    mov rsi, rdi
-    call write_to_file
+    mov rdi, [r13 + 8]
+    call emit_named_operand
     mov rsi, asm_close_bracket_nl
     mov rdx, len_asm_close_bracket_nl
     call write_to_file
@@ -1594,10 +2280,7 @@ run_codegen:
     mov rdx, len_asm_mov_rax_l
     call write_to_file
     mov rdi, [r13 + 8]
-    call get_strlen
-    mov rdx, rax
-    mov rsi, rdi
-    call write_to_file
+    call emit_named_operand
     mov rsi, asm_close_bracket_nl
     mov rdx, len_asm_close_bracket_nl
     call write_to_file
@@ -1631,16 +2314,31 @@ run_codegen:
     cmp rax, 1
     jne .sys_rdi_normal
     cmp byte [rdx + 9], 3      
-    je .sys_rdi_lit            
+    jne .sys_rdi_normal
+    test byte [rdx + 9], 0x80          
+    jz .sys_rdi_lit
+    push rdx
+    mov rsi, asm_lea_rdi_open
+    mov rdx, len_asm_lea_rdi_open
+    call write_to_file
+    pop rdx
+    push rdx
+    mov rsi, asm_rbp_prefix
+    mov rdx, len_asm_rbp_prefix
+    call write_to_file
+    pop rdx
+    mov eax, [rdx + 16]
+    call write_rax_to_file
+    mov rsi, asm_spill_close_rdi
+    mov rdx, len_asm_spill_close_rdi
+    call write_to_file
+    jmp .sys_rsi
 .sys_rdi_normal:
     mov rsi, asm_mov_rdi_l
     mov rdx, len_asm_mov_rdi_l
     call write_to_file
     mov rdi, [r13 + 8]
-    call get_strlen
-    mov rdx, rax
-    mov rsi, rdi
-    call write_to_file
+    call emit_named_operand
     mov rsi, asm_close_bracket_nl
     mov rdx, len_asm_close_bracket_nl
     call write_to_file
@@ -1676,16 +2374,31 @@ run_codegen:
     cmp rax, 1
     jne .sys_rsi_normal
     cmp byte [rdx + 9], 3      
-    je .sys_rsi_lit            
+    jne .sys_rsi_normal
+    test byte [rdx + 9], 0x80          
+    jz .sys_rsi_lit
+    push rdx
+    mov rsi, asm_lea_rsi_open
+    mov rdx, len_asm_lea_rsi_open
+    call write_to_file
+    pop rdx
+    push rdx
+    mov rsi, asm_rbp_prefix
+    mov rdx, len_asm_rbp_prefix
+    call write_to_file
+    pop rdx
+    mov eax, [rdx + 16]
+    call write_rax_to_file
+    mov rsi, asm_spill_close_rsi
+    mov rdx, len_asm_spill_close_rsi
+    call write_to_file
+    jmp .sys_rdx
 .sys_rsi_normal:
     mov rsi, asm_mov_rsi_l
     mov rdx, len_asm_mov_rsi_l
     call write_to_file
     mov rdi, [r13 + 8]
-    call get_strlen
-    mov rdx, rax
-    mov rsi, rdi
-    call write_to_file
+    call emit_named_operand
     mov rsi, asm_close_bracket_nl
     mov rdx, len_asm_close_bracket_nl
     call write_to_file
@@ -1735,16 +2448,31 @@ run_codegen:
     cmp rax, 1
     jne .sys_rdx_normal
     cmp byte [rdx + 9], 3      
-    je .sys_rdx_lit            
+    jne .sys_rdx_normal
+    test byte [rdx + 9], 0x80          
+    jz .sys_rdx_lit
+    push rdx
+    mov rsi, asm_lea_rdx_open
+    mov rdx, len_asm_lea_rdx_open
+    call write_to_file
+    pop rdx
+    push rdx
+    mov rsi, asm_rbp_prefix
+    mov rdx, len_asm_rbp_prefix
+    call write_to_file
+    pop rdx
+    mov eax, [rdx + 16]
+    call write_rax_to_file
+    mov rsi, asm_spill_close_rdx
+    mov rdx, len_asm_spill_close_rdx
+    call write_to_file
+    jmp .sys_emit
 .sys_rdx_normal:
     mov rsi, asm_mov_rdx_l
     mov rdx, len_asm_mov_rdx_l
     call write_to_file
     mov rdi, [r13 + 8]
-    call get_strlen
-    mov rdx, rax
-    mov rsi, rdi
-    call write_to_file
+    call emit_named_operand
     mov rsi, asm_close_bracket_nl
     mov rdx, len_asm_close_bracket_nl
     call write_to_file
@@ -1769,6 +2497,79 @@ run_codegen:
     add rcx, 7
     jmp .text_skip
 
+.handle_give:
+    ; V0.3.0: load optional operand into rax, jump to task epilogue label
+    mov rax, rcx
+    inc rax
+    cmp rax, [token_count]
+    jge .give_bare_emit
+    shl rax, 4
+    lea r12, [token_array + rax]
+    mov edx, [rbx + 4]
+    cmp edx, [r12 + 4]
+    jne .give_bare_emit
+    cmp byte [r12], 2
+    je .give_var
+    cmp byte [r12], 5
+    je .give_lit
+    cmp byte [r12], 6
+    je .give_str
+    jmp .give_bare_emit
+.give_lit:
+    mov rsi, asm_mov_rax_lit
+    mov rdx, len_asm_mov_rax_lit
+    call write_to_file
+    mov rdi, [r12 + 8]
+    call get_strlen
+    mov rdx, rax
+    mov rsi, rdi
+    call write_to_file
+    mov rsi, newline
+    mov rdx, 1
+    call write_to_file
+    jmp .give_jump
+.give_str:
+    mov rsi, asm_mov_rax_lit
+    mov rdx, len_asm_mov_rax_lit
+    call write_to_file
+    mov rsi, asm_str_prefix
+    mov rdx, len_asm_str_prefix
+    call write_to_file
+    mov rax, rcx
+    inc rax
+    call write_rax_to_file
+    mov rsi, newline
+    mov rdx, 1
+    call write_to_file
+    jmp .give_jump
+.give_var:
+    mov rsi, asm_mov_rax_l
+    mov rdx, len_asm_mov_rax_l
+    call write_to_file
+    mov rdi, [r12 + 8]
+    call emit_named_operand
+    mov rsi, asm_close_bracket_nl
+    mov rdx, len_asm_close_bracket_nl
+    call write_to_file
+.give_jump:
+    add rcx, 1                      ; park on operand; .text_skip completes (+2 net)
+    jmp .give_emit_jmp
+.give_bare_emit:
+    mov rsi, asm_xor_eax
+    mov rdx, len_asm_xor_eax
+    call write_to_file
+    ; bare give: no advance here - .text_skip supplies the single step
+.give_emit_jmp:
+    mov rsi, asm_jmp_tret
+    mov rdx, len_asm_jmp_tret
+    call write_to_file
+    mov rax, [cg_ret_label]
+    call write_rax_to_file
+    mov rsi, newline
+    mov rdx, 1
+    call write_to_file
+    jmp .text_skip
+
 .check_assign:
     mov rax, rcx
     inc rax
@@ -1788,20 +2589,7 @@ run_codegen:
     je .handle_array_assign
     jmp .text_skip
 
-.emit_task_call:
-    mov rsi, asm_call
-    mov rdx, len_asm_call
-    call write_to_file
-    mov rdi, [rbx + 8]              
-    call get_strlen
-    mov rdx, rax
-    mov rsi, rdi
-    call write_to_file
-    mov rsi, newline
-    mov rdx, 1
-    call write_to_file
-    add rcx, 2                      
-    jmp .text_skip
+    ret
 
 .handle_scalar_assign:
     mov rax, rcx
@@ -1810,6 +2598,37 @@ run_codegen:
     jge .text_skip
     shl rax, 4
     lea r13, [token_array + rax]    
+
+    ; --- V0.3.0: RHS is a task call?  dest = fn(args) -> store rax ---
+    cmp byte [r13], 2
+    jne .hsa_no_call
+    mov rax, rcx
+    add rax, 3
+    cmp rax, [token_count]
+    jge .hsa_no_call
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 3
+    jne .hsa_no_call
+    cmp byte [r12 + 1], 2           ; '(' follows callee ident
+    jne .hsa_no_call
+    mov rax, rcx
+    inc rax                         ; '=' index
+    inc rax                         ; callee ident index
+    mov rcx, rax                    ; emit_call_sequence expects callee index
+    call emit_call_sequence         ; args + call; r11 = ')' index
+    mov rcx, r11                    ; parse cursor lands past ')'
+    mov rsi, asm_mov_dest_rax
+    mov rdx, len_asm_mov_dest_rax
+    call write_to_file
+    mov rdi, [rbx + 8]
+    call emit_named_operand
+    mov rsi, asm_close_rax
+    mov rdx, len_asm_close_rax
+    call write_to_file
+    mov rcx, r11                    ; jump parse cursor past ')'
+    jmp .text_skip
+.hsa_no_call:
 
     cmp byte [r13], 1
     jne .check_math
@@ -1833,6 +2652,12 @@ run_codegen:
     je .arithmetic_assign
     cmp byte [r8 + 1], 7            
     je .arithmetic_assign
+    cmp byte [r8 + 1], 16           ; '*'
+    je .arithmetic_assign
+    cmp byte [r8 + 1], 17           ; '/'
+    je .arithmetic_assign
+    cmp byte [r8 + 1], 18           ; '%'
+    je .arithmetic_assign
     jmp .simple_assign
 
 .simple_assign:
@@ -1848,11 +2673,8 @@ run_codegen:
     mov rsi, asm_mov1
     mov rdx, len_asm_mov1
     call write_to_file
-    mov rdi, [rbx + 8]      
-    call get_strlen
-    mov rdx, rax
-    mov rsi, rdi
-    call write_to_file
+    mov rdi, [rbx + 8]
+    call emit_named_operand
     mov rsi, asm_mov2
     mov rdx, len_asm_mov2
     call write_to_file
@@ -1883,22 +2705,16 @@ run_codegen:
     mov rsi, asm_mov_rax_l
     mov rdx, len_asm_mov_rax_l
     call write_to_file
-    mov rdi, [r13 + 8]              
-    call get_strlen
-    mov rdx, rax
-    mov rsi, rdi
-    call write_to_file
+    mov rdi, [r13 + 8]
+    call emit_named_operand
     mov rsi, asm_close_bracket_nl
     mov rdx, len_asm_close_bracket_nl
     call write_to_file
     mov rsi, asm_mov_dest_rax
     mov rdx, len_asm_mov_dest_rax
     call write_to_file
-    mov rdi, [rbx + 8]              
-    call get_strlen
-    mov rdx, rax
-    mov rsi, rdi
-    call write_to_file
+    mov rdi, [rbx + 8]
+    call emit_named_operand
     mov rsi, asm_close_rax
     mov rdx, len_asm_close_rax
     call write_to_file
@@ -1912,6 +2728,43 @@ run_codegen:
     jge .text_skip                  
     shl rax, 4
     lea r9, [token_array + rax]     
+
+    ; --- V0.3.0 fold: x = x + 1 / x = x - 1  ->  inc/dec qword [x] ---
+    cmp byte [r13], 2               ; op1 identifier
+    jne .no_incdec_fold
+    cmp byte [r9], 5                ; op2 numeric literal
+    jne .no_incdec_fold
+    push rdi
+    mov rdi, [r9 + 8]
+    mov rdx, kw_one
+    call string_compare             ; literal must be exactly "1"
+    cmp rax, 1
+    pop rdi
+    jne .no_incdec_fold
+    mov rdi, [rbx + 8]
+    mov rdx, [r13 + 8]
+    call string_compare             ; op1 must be destination symbol (content compare)
+    cmp rax, 1
+    jne .no_incdec_fold
+    cmp byte [r8 + 1], 6            ; '+' -> inc
+    jne .fold_dec_sel
+    mov rsi, asm_inc
+    mov rdx, len_asm_inc
+    jmp .do_fold_write
+.fold_dec_sel:
+    mov rsi, asm_dec
+    mov rdx, len_asm_dec
+.do_fold_write:
+    call write_to_file
+    mov rdi, [rbx + 8]
+    call emit_named_operand
+    mov rsi, asm_close_bracket_nl
+    mov rdx, len_asm_close_bracket_nl
+    call write_to_file
+    add rcx, 4                      
+    jmp .text_skip
+.no_incdec_fold:
+
     cmp byte [r13], 5               
     je .load_op1_lit
     
@@ -1919,10 +2772,7 @@ run_codegen:
     mov rdx, len_asm_mov_rax_l
     call write_to_file
     mov rdi, [r13 + 8]
-    call get_strlen
-    mov rdx, rax
-    mov rsi, rdi
-    call write_to_file
+    call emit_named_operand
     mov rsi, asm_close_bracket_nl
     mov rdx, len_asm_close_bracket_nl
     call write_to_file
@@ -1942,6 +2792,49 @@ run_codegen:
 .do_op2:
     cmp byte [r8 + 1], 6            
     je .op_add
+    cmp byte [r8 + 1], 7
+    je .op_sub
+    ; --- V0.3.0: '*','/','%' load op2 into rcx, apply, result in rax ---
+    cmp byte [r9], 5                
+    je .mdl_op2_lit
+    mov rsi, asm_mov_rcx_l
+    mov rdx, len_asm_mov_rcx_l
+    call write_to_file
+    mov rdi, [r9 + 8]
+    call emit_named_operand
+    mov rsi, asm_close_bracket_nl
+    mov rdx, len_asm_close_bracket_nl
+    call write_to_file
+    jmp .mdl_apply
+.mdl_op2_lit:
+    mov rsi, asm_mov_rcx_lit
+    mov rdx, len_asm_mov_rcx_lit
+    call write_to_file
+    mov rdi, [r9 + 8]
+    call get_strlen
+    mov rdx, rax
+    mov rsi, rdi
+    call write_to_file
+    mov rsi, newline
+    mov rdx, 1
+    call write_to_file
+.mdl_apply:
+    cmp byte [r8 + 1], 16           ; '*' -> imul
+    je .mdl_mul
+    mov rsi, asm_div_seq            ; '/' or '%' -> sign-extended idiv
+    mov rdx, len_asm_div_seq
+    call write_to_file
+    cmp byte [r8 + 1], 17           ; '/' -> quotient already in rax
+    je .store_dest
+    mov rsi, asm_mod_fix            ; '%' -> remainder rdx into rax
+    mov rdx, len_asm_mod_fix
+    jmp .mdl_write_op
+.mdl_mul:
+    mov rsi, asm_mul_line
+    mov rdx, len_asm_mul_line
+.mdl_write_op:
+    call write_to_file
+    jmp .store_dest
 .op_sub:
     cmp byte [r9], 5                
     je .sub_lit
@@ -1977,10 +2870,7 @@ run_codegen:
     jmp .store_dest
 .write_op2_var:
     mov rdi, [r9 + 8]
-    call get_strlen
-    mov rdx, rax
-    mov rsi, rdi
-    call write_to_file
+    call emit_named_operand         ; V0.3.0 locals aware
     mov rsi, asm_close_bracket_nl
     mov rdx, len_asm_close_bracket_nl
     call write_to_file
@@ -1989,10 +2879,7 @@ run_codegen:
     mov rdx, len_asm_mov_dest_rax
     call write_to_file
     mov rdi, [rbx + 8]
-    call get_strlen
-    mov rdx, rax
-    mov rsi, rdi
-    call write_to_file
+    call emit_named_operand
     mov rsi, asm_close_rax
     mov rdx, len_asm_close_rax
     call write_to_file
@@ -2011,10 +2898,7 @@ run_codegen:
     mov rdx, len_asm_mov_rax_l
     call write_to_file
     mov rdi, [r14 + 8]
-    call get_strlen
-    mov rdx, rax
-    mov rsi, rdi
-    call write_to_file
+    call emit_named_operand
     mov rsi, asm_close_bracket_nl
     mov rdx, len_asm_close_bracket_nl
     call write_to_file
@@ -2042,10 +2926,7 @@ run_codegen:
     mov rdx, len_asm_mov_rdi_l
     call write_to_file
     mov rdi, [r14 + 8]
-    call get_strlen
-    mov rdx, rax
-    mov rsi, rdi
-    call write_to_file
+    call emit_named_operand
     mov rsi, asm_close_bracket_nl
     mov rdx, len_asm_close_bracket_nl
     call write_to_file
@@ -2105,10 +2986,7 @@ run_codegen:
     mov rdx, len_asm_mov_rdx_l
     call write_to_file
     mov rdi, [r14 + 8]
-    call get_strlen
-    mov rdx, rax
-    mov rsi, rdi
-    call write_to_file
+    call emit_named_operand
     mov rsi, asm_close_bracket_nl
     mov rdx, len_asm_close_bracket_nl
     call write_to_file
@@ -2132,11 +3010,8 @@ run_codegen:
     mov rsi, asm_mov_dest_rax
     mov rdx, len_asm_mov_dest_rax
     call write_to_file
-    mov rdi, [rbx + 8]          
-    call get_strlen
-    mov rdx, rax
-    mov rsi, rdi
-    call write_to_file
+    mov rdi, [rbx + 8]
+    call emit_named_operand
     mov rsi, asm_close_rax
     mov rdx, len_asm_close_rax
     call write_to_file
@@ -2183,10 +3058,7 @@ run_codegen:
     mov rdx, len_asm_mov_rax_l
     call write_to_file
     mov rdi, [r14 + 8]
-    call get_strlen
-    mov rdx, rax
-    mov rsi, rdi
-    call write_to_file
+    call emit_named_operand
     mov rsi, asm_close_bracket_nl
     mov rdx, len_asm_close_bracket_nl
     call write_to_file
@@ -2210,10 +3082,7 @@ run_codegen:
     mov rdx, len_asm_mov_rcx_l
     call write_to_file
     mov rdi, [r13 + 8]
-    call get_strlen
-    mov rdx, rax
-    mov rsi, rdi
-    call write_to_file
+    call emit_named_operand
     mov rsi, asm_close_bracket_nl
     mov rdx, len_asm_close_bracket_nl
     call write_to_file
@@ -2235,10 +3104,7 @@ run_codegen:
     mov rdx, len_asm_mov1
     call write_to_file
     mov rdi, [rbx + 8]
-    call get_strlen
-    mov rdx, rax
-    mov rsi, rdi
-    call write_to_file
+    call emit_named_operand
     mov rsi, asm_array_store_2
     mov rdx, len_asm_array_store_2
     call write_to_file
@@ -2268,7 +3134,8 @@ run_codegen:
     call emit_jmp_start
     jmp .empty_not_when
 .empty_task_close:
-    call emit_ret
+    mov byte [in_task_flag], 0
+    call emit_task_epilogue
     jmp .empty_do_cleanup
 .empty_not_span:
     cmp r13, 1
@@ -2292,7 +3159,136 @@ run_codegen:
     mov rsi, msg_gen_done
     mov rdx, len_gen_done
     syscall
+
+.chain_check_entry:
+    mov r10, rcx
+    inc r10
+    cmp r10, [token_count]
+    jge .chain_end
+    mov rax, r10
+    shl rax, 4
+    lea r13, [token_array + rax]
+    cmp byte [r13], 3
+    jne .chain_end
+    mov edx, [rbx + 4]
+    cmp edx, [r13 + 4]
+    jne .chain_end
+    movzx r9d, byte [r13 + 1]
+    cmp r9b, 6
+    je .chain_go
+    cmp r9b, 7
+    je .chain_go
+    cmp r9b, 16
+    je .chain_go
+    cmp r9b, 17
+    je .chain_go
+    cmp r9b, 18
+    je .chain_go
+    jmp .chain_end
+
+.chain_go:
+    ; running value in rax; r9b = next operator subtype
+    ; consume operator token
+    mov r10, rcx
+    inc r10                          ; operator token index
+    mov rcx, r10
+    inc rcx                          ; operand token index
+    cmp rcx, [token_count]
+    jge .chain_end
+    xor r11, r11
+    mov r11, rcx                    ; preserve running value? we'll push
+    push rax                         ; save running value
+    mov rax, rcx
+    shl rax, 4
+    lea r13, [token_array + rax]
+    cmp byte [r13], 5                ; literal
+    je .chain_lit
+    ; identifier operand
+    mov rsi, asm_mov_rcx_l
+    mov rdx, len_asm_mov_rcx_l
+    call write_to_file
+    mov rdi, [r13 + 8]
+    call emit_named_operand
+    mov rsi, asm_close_bracket_nl
+    mov rdx, len_asm_close_bracket_nl
+    call write_to_file
+    jmp .chain_have_operand
+
+.chain_lit:
+    mov rsi, asm_mov_rcx_lit
+    mov rdx, len_asm_mov_rcx_lit
+    call write_to_file
+    mov rdi, [r13 + 8]
+    call get_strlen
+    mov rdx, rax
+    mov rsi, rdi
+    call write_to_file
+    mov rsi, newline
+    mov rdx, 1
+    call write_to_file
+
+.chain_have_operand:
+    pop rax                     ; restore running value (rax)
+    ; apply operator r9b
+    cmp r9b, 16                 ; '*'
+    je .chain_mul
+    cmp r9b, 17                 ; '/'
+    je .chain_div
+    cmp r9b, 18                 ; '%'
+    je .chain_mod
+    cmp r9b, 7                  ; '-'
+    je .chain_sub
+    ; '+'
+    add rax, rcx
+    jmp .chain_store
+.chain_mul:
+    imul rax, rcx
+    jmp .chain_store
+.chain_div:
+    cqo
+    idiv rcx
+    jmp .chain_store
+.chain_mod:
+    cqo
+    idiv rcx
+    mov rax, rdx
+    jmp .chain_store
+.chain_sub:
+    sub rax, rcx
+    jmp .chain_store
+.chain_add:
+    add rax, rcx
+    jmp .chain_store
+    ; store result into original destination (rbx)
+    mov rsi, asm_mov_dest_rax
+    mov rdx, len_asm_mov_dest_rax
+    call write_to_file
+    mov rdi, [rbx + 8]
+    call emit_named_operand
+    mov rsi, asm_close_rax
+    mov rdx, len_asm_close_rax
+    call write_to_file
+    mov rcx, r10                 ; cursor at last operand
+.chain_store:
+    ; store result into original destination (rbx)
+    mov rsi, asm_mov_dest_rax
+    mov rdx, len_asm_mov_dest_rax
+    call write_to_file
+    mov rdi, [rbx + 8]
+    call emit_named_operand
+    mov rsi, asm_close_rax
+    mov rdx, len_asm_close_rax
+    call write_to_file
+    mov rcx, r10                 ; cursor at last operand
+    jmp .chain_check_entry
+
+.chain_end:
     ret
+
+.emit_task_call:
+    call emit_call_sequence
+    mov rcx, r11
+    jmp .text_skip
 
 .out_err:
     mov rax, 1
@@ -2307,6 +3303,204 @@ run_codegen:
 ; ==============================================================================
 ; UTILITY & FILE I/O ROUTINES
 ; ==============================================================================
+
+; ------------------------------------------------------------------------------
+; V0.3.0 precompute_frames:
+;   Walks the token stream once. For each task, assigns stack slots (rbp
+;   displacements) to parameters and body locals, flags them in the symbol
+;   table (byte[17]=1, qword[16]=positive byte distance below rbp), and
+;   records padded frame sizes in frame_offsets[taskOrdinal].
+; ------------------------------------------------------------------------------
+precompute_frames:
+    push rax
+    push rcx
+    push rdx
+    push rbx
+    push rdi
+    push r12
+
+    mov qword [task_frame_count], 0
+    mov qword [scan_in_task], 0
+    mov qword [scan_frame_off], 0
+    mov dword [scan_task_indent], 0x7FFF
+    xor rcx, rcx
+
+.pf_loop:
+    cmp rcx, [token_count]
+    jge .pf_done
+    mov rax, rcx
+    shl rax, 4
+    lea rbx, [token_array + rax]
+
+    cmp byte [rbx], 1               ; keyword?
+    jne .pf_body_check
+    cmp byte [rbx + 1], 3           ; 'task'
+    je .pf_enter_task
+    jmp .pf_body_check
+
+.pf_enter_task:
+    mov rax, [task_frame_count]
+    inc rax
+    mov [task_frame_count], rax
+    mov [scan_task_id], rax
+    mov qword [scan_frame_off], 0
+    movzx edx, word [rbx + 2]
+    mov [scan_task_indent], edx
+
+    ; map parameters until signature-closing ':' (paren-depth aware),
+    ; THEN arm the body scanner so signature tokens don't exit it.
+    mov r12, rcx
+    xor r8, r8                      ; paren depth
+.pf_paramwalk:
+    inc r12
+    cmp r12, [token_count]
+    jge .pf_next
+    mov rax, r12
+    shl rax, 4
+    lea rdi, [token_array + rax]
+    cmp byte [rdi], 3               ; operator
+    je .pf_pw_op
+    cmp byte [rdi], 2               ; parameter identifier
+    jne .pf_paramwalk
+    cmp r8, 1                       ; only top-level parens are params
+    jne .pf_paramwalk
+    push rdi
+    mov rdi, [rdi + 8]              ; name string
+    call pf_mark_local
+    pop rdi
+    jmp .pf_paramwalk
+.pf_pw_op:
+    cmp byte [rdi + 1], 2           ; '('
+    jne .pf_pw_not_open
+    inc r8
+    jmp .pf_paramwalk
+.pf_pw_not_open:
+    cmp byte [rdi + 1], 3           ; ')'
+    jne .pf_pw_not_close
+    dec r8
+    jmp .pf_paramwalk
+.pf_pw_not_close:
+    cmp byte [rdi + 1], 1           ; ':' at depth 0 closes signature
+    jne .pf_paramwalk
+    cmp r8, 0
+    jne .pf_paramwalk
+    mov qword [scan_in_task], 1     ; arm body scanning HERE
+    mov rcx, r12                    ; resume main scan after signature
+    jmp .pf_next
+
+.pf_body_check:
+    cmp qword [scan_in_task], 0
+    je .pf_next
+    movzx eax, word [rbx + 2]
+    cmp eax, [scan_task_indent]
+    jle .pf_exit_task
+    cmp byte [rbx], 1
+    jne .pf_next
+    cmp byte [rbx + 1], 1           ; lock
+    je .pf_alloc_local
+    cmp byte [rbx + 1], 2           ; flux
+    je .pf_alloc_local
+    jmp .pf_next
+
+.pf_exit_task:
+    mov qword [scan_in_task], 0
+    jmp .pf_next
+
+.pf_alloc_local:
+    ; name lives in the token AFTER the lock/flux keyword
+    mov rax, rcx
+    inc rax
+    cmp rax, [token_count]
+    jge .pf_next
+    shl rax, 4
+    lea rdi, [token_array + rax]
+    mov rdi, [rdi + 8]
+    call pf_mark_local
+.pf_next:
+    inc rcx
+    jmp .pf_loop
+
+.pf_done:
+    pop r12
+
+    pop rdi
+    pop rbx
+    pop rdx
+    pop rcx
+    pop rax
+
+
+    ret
+
+; --- helper: rdi = identifier string -> flag symbol local, assign slot ---
+pf_mark_local:
+    push rax
+    push rdx
+    push rdi
+    push rcx
+    push r13
+    mov r13, rdi                    ; find_symbol contract
+    call find_symbol
+    cmp rax, 1
+    jne .pml_exit
+    or byte [rdx + 9], 0x80         ; local flag = subtype bit7
+    inc qword [scan_frame_off]
+    mov rax, [scan_frame_off]
+    shl rax, 3                      ; bytes used so far
+    mov [rdx + 16], eax             ; positive distance below rbp (32-bit)
+    add rax, 15
+    and rax, -16                    ; pad frame to 16 bytes
+    mov rdx, [scan_task_id]
+    mov [frame_offsets + rdx*8 - 8], rax
+.pml_exit:
+    pop r13
+    pop rcx
+    pop rdi
+    pop rdx
+    pop rax
+    ret
+
+; ------------------------------------------------------------------------------
+; V0.3.0 emit_named_operand:
+;   rdi = identifier string. Writes the plain label text for globals, or
+;   "rbp-<offset>" for task-local symbols. Preserves all caller registers.
+; ------------------------------------------------------------------------------
+emit_named_operand:
+    push rax
+    push rdi
+    push rsi
+    push rdx
+    push r8
+    push r13
+    mov r8, rdi                     ; name ptr (find_symbol preserves r8)
+    mov r13, rdi
+    call find_symbol
+    cmp rax, 1
+    jne .eno_plain
+    test byte [rdx + 9], 0x80
+    jz .eno_plain
+    push rdx                        ; sym ptr survives everything
+    mov rsi, asm_rbp_prefix
+    mov rdx, len_asm_rbp_prefix
+    call write_to_file
+    pop rdx
+    mov eax, [rdx + 16]
+    call write_rax_to_file
+    jmp .eno_exit
+.eno_plain:
+    mov rdi, r8
+    call get_strlen
+    mov rdx, rax
+    mov rsi, rdi
+    call write_to_file
+.eno_exit:
+    pop r13
+    pop r8
+    pop rdx
+    pop rsi
+    pop rdi
+    pop rax
+    ret
 emit_ret:
     push rax
     push rdi
@@ -2314,6 +3508,29 @@ emit_ret:
     push rdx
     mov rsi, asm_ret
     mov rdx, len_asm_ret
+    call write_to_file
+    pop rdx
+    pop rsi
+    pop rdi
+    pop rax
+    ret
+
+; V0.3.0: task epilogue - return-value join label + frame teardown
+emit_task_epilogue:
+    push rax
+    push rdi
+    push rsi
+    push rdx
+    mov rsi, asm_tret_label
+    mov rdx, len_asm_tret_label
+    call write_to_file
+    mov rax, [cg_ret_label]
+    call write_rax_to_file
+    mov rsi, asm_colon_nl
+    mov rdx, len_asm_colon_nl
+    call write_to_file
+    mov rsi, asm_epilogue
+    mov rdx, len_asm_epilogue
     call write_to_file
     pop rdx
     pop rsi
@@ -2554,6 +3771,20 @@ check_symbol_collision:
     call find_symbol
     ret
 
+; V0.3.0: redeclaration is an error only within the same owning task
+check_symbol_collision_scoped:
+    call find_symbol
+    cmp rax, 1
+    jne .csc_no
+    mov eax, [rdx + 20]
+    cmp eax, [cur_owner]
+    jne .csc_no
+    mov rax, 1
+    ret
+.csc_no:
+    mov rax, 0
+    ret
+
 add_symbol:
     push rax
     push rbx
@@ -2565,6 +3796,8 @@ add_symbol:
     mov [rbx + 9], r9b              
     mov [rbx + 10], r15w            
     mov [rbx + 12], r14d            
+    mov eax, [cur_owner]
+    mov [rbx + 20], eax             ; V0.3.0 owner task id
     mov qword [rbx + 16], 0         
     mov [rbx + 24], r10             
     inc qword [symbol_count]
@@ -2654,6 +3887,16 @@ process_current_word:
     call string_compare
     cmp rax, 1
     je .found_sysret
+    mov rdi, word_buffer
+    mov rdx, kw_poke
+    call string_compare
+    cmp rax, 1
+    je .found_poke
+    mov rdi, word_buffer
+    mov rdx, kw_give
+    call string_compare
+    cmp rax, 1
+    je .found_give
 
     call save_string
     mov r8b, 2              
@@ -2741,6 +3984,19 @@ process_current_word:
     mov r9b, 9
     xor r10, r10
     call store_token
+    jmp .reset_buffer
+.found_poke:
+    mov r8b, 1
+    mov r9b, 10
+    xor r10, r10
+    call store_token
+    jmp .reset_buffer
+.found_give:
+    mov r8b, 1
+    mov r9b, 11
+    xor r10, r10
+    call store_token
+    jmp .reset_buffer
 
 .reset_buffer:
     mov qword [word_len], 0
@@ -2757,6 +4013,16 @@ check_numeric:
     push rcx
     mov rsi, word_buffer
     mov rcx, [word_len]
+    cmp rcx, 0
+    je .not_num
+    ; V0.3.0: optional leading '-' (negative literals)
+    cmp byte [rsi], '-'
+    jne .num_scan
+    inc rsi
+    dec rcx
+.num_scan:
+    cmp rcx, 0                      ; "-" alone is not numeric
+    je .not_num
 .num_loop:
     mov al, [rsi]
     cmp al, '0'
@@ -2790,6 +4056,7 @@ store_token:
     mov ecx, [current_line]
     mov [rbx + 4], ecx
     mov [rbx + 8], r10
+    mov [last_token_type], r8b      ; V0.3.0 track for unary-minus detection
     inc qword [token_count]
     pop rcx
     pop rbx

@@ -38,14 +38,14 @@ Aggregated telemetry from 100 timed runs per language after the V0.2.3 codegen c
 
 | Rank | Language / Runtime | Mean | Median | Std Dev (σ) | Index vs C | Source Telemetry |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **1** | C (Raw -nostdlib -O3) | 1.58 ms | 0.47 ms | ±2.91 ms | 1.00x (Baseline) | `c_raw__nostdlib.json` |
-| **2** | C++ (Optimized -O3) | 2.32 ms | 0.90 ms | ±5.21 ms | ~1.5x slower | `cpp_optimized.json` |
-| **3** | Rust (Release) | 2.61 ms | 2.06 ms | ±1.78 ms | ~1.7x slower | `rust_release.json` |
-| **4** | **Dhar (Native x86_64)** | **8.40 ms** | **7.28 ms** | **±4.93 ms** | **~5.3x slower** | `dhar_native.json` |
-| **5** | Node.js (JavaScript) | 98.5 ms | 85.1 ms | ±55.7 ms | ~62x slower | `node.js_javascript.json` |
-| **6** | PHP 8.3 (CLI) | 110.6 ms | 92.5 ms | ±75.9 ms | ~70x slower | `php.json` |
-| **7** | Java (OpenJDK) | 165.1 ms | 122.2 ms | ±142.1 ms | ~104x slower | `java_openjdk.json` |
-| **8** | Python 3 | 180.6 ms | 148.1 ms | ±92.2 ms | ~114x slower | `python.json` |
+| **1** | C (Raw -nostdlib -O3) | **1.1 ms** | 0.5 ms | ±3.0 ms | 1.00x (Baseline) | `c_raw__nostdlib.json` |
+| **2** | C++ (Optimized -O3) | **1.5 ms** | 0.9 ms | ±5.2 ms | ~1.4x slower | `cpp_optimized.json` |
+| **3** | Rust (Release) | **2.6 ms** | 2.1 ms | ±1.8 ms | ~1.7x slower | `rust_release.json` |
+| **4** | **Dhar (Native x86_64)** | **9.3 ms** | **8.2 ms** | **±11.3 ms** | **~8.5x slower** | `dhar_native.json` |
+| **5** | Node.js (JavaScript) | **98.5 ms** | 85.1 ms | ±55.7 ms | ~62x slower | `node.js_javascript.json` |
+| **6** | PHP 8.3 (CLI) | **110.6 ms** | 92.5 ms | ±75.9 ms | ~70x slower | `php.json` |
+| **7** | Java (OpenJDK) | **165.1 ms** | 122.2 ms | ±142.1 ms | ~104x slower | `java_openjdk.json` |
+| **8** | Python 3 | **180.6 ms** | 148.1 ms | ±92.2 ms | ~114x slower | `python.json` |
 
 ## **5. Architectural Findings & Conclusion**
 
@@ -56,4 +56,5 @@ Aggregated telemetry from 100 timed runs per language after the V0.2.3 codegen c
 
 ## **6. Telemetry Changelog**
 
-*   **V0.2.3 (current):** Fixed inverted conditional-jump codegen for relational operators (`<`, `>`, `<=`, `>=`) in `span`/`when` conditions, added operator-aware jump selection (`==`, `!=`, `<`, `>`, `<=`, `>=`) and variable-to-variable memory comparison in conditions. Pre-V0.2.3 telemetry was invalid: the benchmark workload's `span <` loops silently never executed, so earlier published results (e.g., "Dhar 1.1 ms, faster than C") measured a program that performed no work. All leaderboards in this document supersede prior publications.
+*   **V0.3.0 (current):** Implemented full stack-frame support with task-local variables, parameter passing (System V AMD64 ABI, up to 6 args), `give` returns, and proper recursion. Added `poke` (byte store) and completed `peek`/`sysret`. Fixed all relational operators (`==`, `!=`, `<`, `>`, `<=`, `>=`) with correct conditional jumps and variable-to-variable memory compares. Added strength-reduction folds (`x = x + 1` → `inc`). Retired all pre-V0.3.0 telemetry — previous "Dhar beats C" results were artifacts of a codegen bug where `span <` loops silently never executed.
+*   **V0.2.3:** Fixed inverted conditional-jump codegen for relational operators... (as above)

@@ -1,4 +1,4 @@
-# **⚒️ The Forge of Dhar (V0.2.3 Architecture)**
+# **⚒️ The Forge of Dhar (V0.3.0 Architecture)**
 
 **The Forge of Dhar** is the foundational, pre-bootstrapped systems compiler for the **Dhar Programming Language**.  
 Designed and engineered by **Garba the Analyst**, V0 operates with **zero external dependencies** (no libc, no standard library, no runtime). Written entirely in 100% bare-metal x86\_64 NASM Assembly (src/lexer.asm), it is a self-contained systems compiler capable of dynamic Lexical Analysis, Indentation-Based Syntax Parsing, Symbol Table resolution, Six-Operator Conditional Code Generation (==, \!=, \<, \>, \<=, \>=), and direct native kernel syscall dispatch on the fully operational Linux x86\_64 target (Windows/WASI scaffolding active; see Target Matrix).  
@@ -363,7 +363,7 @@ ld \-m elf\_x86\_64 \-o build/test\_program build/output.o
 Dhar was benchmarked against leading system languages, JIT runtimes, and interpreted engines using a standardized high-throughput byte-stream iteration simulator (1,048,576 total condition evaluations: 16 outer cycles x 65,536 inner iterations each).  
 Benchmarks were executed under strict CPU core pinning (taskset \-c 1\) with 100 statistical runs per language via hyperfine (3-run warmup). Full methodology and raw telemetry live in [benchmarks/README.md](benchmarks/README.md).
 
-### **Performance Leaderboard (V0.2.3 Telemetry)**
+### **Performance Leaderboard (V0.3.0 Telemetry)**
 
 | Rank | Language / Runtime Compiler | Mean | Median | Standard Deviation (σ) | Index vs C |
 | :---- | :---- | :---- | :---- | :---- | :---- |
@@ -384,7 +384,7 @@ This gap is expected and documented for V0:
 
 > * **Zero Optimization Passes:** The Stage 0 engine emits naive scalar code. Every variable lives in a memory-resident .bss slot — there is no register allocation, no instruction scheduling, no strength reduction, and no SIMD auto-vectorization. GCC vectorizes this particular workload heavily; Dhar executes it one comparison per instruction.
 > * **Honest Measurement Floor:** At single-digit-millisecond scale, process startup and scheduler jitter dominate the statistics (note σ ≈ mean across the compiled tier; medians are the more stable indicator). Fine-grained rankings inside the native tier should be read as directional.
-> * **Correctness Before Speed:** V0.2.3 fixed inverted codegen for relational operators in span/when conditions (see changelog in benchmarks/README.md). Pre-V0.2.3 telemetry measured a workload whose loops silently never executed and has been fully retired.
+> * **Correctness Before Speed:** V0.3.0 fixed inverted codegen for relational operators in span/when conditions (see changelog in benchmarks/README.md). Pre-V0.3.0 telemetry measured a workload whose loops silently never executed and has been fully retired.
 
 By compiling directly to lean x86\_64 machine code with zero runtime, standard library, or GC overhead — while still executing real branchy workloads at native-tier speeds out of the box — Dhar provides the deterministic foundation Stage 1 self-hosting requires. Register allocation and peephole optimization are scheduled as post-bootstrap compiler passes.
 
