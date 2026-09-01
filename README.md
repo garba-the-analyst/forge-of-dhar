@@ -1,7 +1,7 @@
-# **⚒️ The Forge of Dhar (V0.3.0 Architecture)**
+# **⚒️ The Forge of Dhar (V0.4.0-doc Architecture)**
 
 **The Forge of Dhar** is the foundational, pre-bootstrapped systems compiler for the **Dhar Programming Language**.  
-Designed and engineered by **Garba the Analyst**, V0 operates with **zero external dependencies** (no libc, no standard library, no runtime). Written entirely in 100% bare-metal x86\_64 NASM Assembly (src/lexer.asm), it is a self-contained systems compiler capable of dynamic Lexical Analysis, Indentation-Based Syntax Parsing, Symbol Table resolution, Six-Operator Conditional Code Generation (==, \!=, \<, \>, \<=, \>=), and direct native kernel syscall dispatch on the fully operational Linux x86\_64 target (Windows/WASI scaffolding active; see Target Matrix).  
+Designed and engineered by **Garba the Analyst**, V0 operates with **zero external dependencies** (no libc, no standard library, no runtime). Written entirely in 100% bare-metal x86\_64 NASM Assembly (src/lexer.asm), it is a self-contained systems compiler capable of dynamic Lexical Analysis, Indentation-Based Syntax Parsing, Symbol Table resolution, Six-Operator Conditionals, `mold`/`forge` (`{}`), `shift`/`scan`/`cycle`, `view`/`grab` borrowing, `pull`/`expose` modules, `state`/`trap`/`enforce` error model, and direct native kernel syscall dispatch on the fully operational Linux x86\_64 target (Windows/WASI scaffolding active; see Target Matrix).  
 This repository serves as the Turing-complete foundation required to compile Dhar Stage 1 (the self-hosted compiler written in Dhar itself).
 
 ## **📋 Table of Contents**
@@ -17,6 +17,10 @@ This repository serves as the Turing-complete foundation required to compile Dha
    * [Control Flow Constructs]
    * [Kernel Interfacing & System Calls]
    * [Tasks (Functions) & Subroutine Semantics]
+   * [Molds & Forges (Data Layout vs Logic)]
+   * [Borrowing: view/grab]
+   * [Modules: pull/expose]
+   * [Error Model: state/trap/enforce]
 > 4. [Target Architecture & Cross-Compilation Matrix]
 > 5. [Building & Compiler CLI Usage]
 > 6. [Benchmark Suite & Telemetry Analysis]
@@ -85,7 +89,7 @@ Dhar uses **indentation-based block scoping** (4 spaces or 1 tab per level):
 
 ### **3\. Data Types & Memory Layout**
 
-Dhar V0 provides three core primitive data types, each mapped to specific x86\_64 memory segments and register behaviors:
+Dhar V0.4.0-doc provides full primitive types: `i8,i16,i32,i64` `u8,u16,u32,u64` `f32,f64` `char` `str` `bool` `raw`, each mapped to specific x86\_64 memory segments and register behaviors:
 
 #### **A. i32 (32-bit Integer)**
 
