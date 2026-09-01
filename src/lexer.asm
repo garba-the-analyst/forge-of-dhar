@@ -1136,8 +1136,6 @@ run_parser:
 
     ; V0.3.0: validate full argument list (max 6, System V registers)
     mov r8, rcx
-    inc r8
-    inc r8                          ; '(' index
     cmp r8, [token_count]
     jge .err_syntax
     xor r9, r9                      ; arg count
@@ -1171,8 +1169,8 @@ run_parser:
 .vtc_nopen:
     cmp byte [r12 + 1], 3
     jne .vtc_nclose
-    cmp r10, 0
-    je .vtc_close                   ; our closing paren
+    cmp r10, 1
+    je .vtc_close                   ; depth 1 -> closing paren of call
     dec r10
     jmp .vtc_walk
 .vtc_nclose:
