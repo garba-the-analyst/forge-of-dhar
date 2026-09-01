@@ -33,6 +33,29 @@ section .data
     kw_sysret db "sysret", 0
     kw_poke db "poke", 0
     kw_give db "give", 0
+    kw_shift db "shift", 0
+    kw_scan db "scan", 0
+    kw_cycle db "cycle", 0
+    kw_mold db "mold", 0
+    kw_forge db "forge", 0
+    kw_view db "view", 0
+    kw_grab db "grab", 0
+    kw_pull db "pull", 0
+    kw_expose db "expose", 0
+    kw_state db "state", 0
+    kw_trap db "trap", 0
+    kw_enforce db "enforce", 0
+    kw_i8 db "i8", 0
+    kw_i16 db "i16", 0
+    kw_i64 db "i64", 0
+    kw_u8 db "u8", 0
+    kw_u16 db "u16", 0
+    kw_u32 db "u32", 0
+    kw_u64 db "u64", 0
+    kw_f32 db "f32", 0
+    kw_f64 db "f64", 0
+    kw_char db "char", 0
+    kw_bool db "bool", 0
     ; TARGET TRIPLE STRINGS
     str_target_linux db "--target=linux", 0
     str_target_windows db "--target=windows", 0
@@ -438,6 +461,10 @@ _start:
     je .handle_slash
     cmp al, 37                      ; '%'
     je .handle_percent
+    cmp al, 123                     ; '{'
+    je .handle_lbrace
+    cmp al, 125                     ; '}'
+    je .handle_rbrace
 
     mov rdi, word_buffer
     mov rcx, [word_len]
@@ -669,6 +696,22 @@ _start:
     call store_token
     inc rsi
     jmp .next_char
+.handle_lbrace:
+    call process_current_word
+    mov r8b, 3
+    mov r9b, 19
+    xor r10, r10
+    call store_token
+    inc rsi
+    jmp .next_char
+.handle_rbrace:
+    call process_current_word
+    mov r8b, 3
+    mov r9b, 20
+    xor r10, r10
+    call store_token
+    inc rsi
+    jmp .next_char
 
 .start_comment:
     call process_current_word
@@ -790,6 +833,30 @@ run_parser:
     je .check_poke_stmt
     cmp r9b, 11                     ; give
     je .check_give_stmt
+    cmp r9b, 12                     ; shift
+    je .check_shift_stmt
+    cmp r9b, 13                     ; scan
+    je .check_scan_stmt
+    cmp r9b, 14                     ; cycle
+    je .check_cycle_stmt
+    cmp r9b, 15                     ; mold
+    je .check_mold_stmt
+    cmp r9b, 16                     ; forge
+    je .check_forge_stmt
+    cmp r9b, 17                     ; view
+    je .check_view_stmt
+    cmp r9b, 18                     ; grab
+    je .check_grab_stmt
+    cmp r9b, 19                     ; pull
+    je .check_pull_stmt
+    cmp r9b, 20                     ; expose
+    je .check_expose_stmt
+    cmp r9b, 21                     ; state
+    je .check_state_stmt
+    cmp r9b, 22                     ; trap
+    je .check_trap_stmt
+    cmp r9b, 23                     ; enforce
+    je .check_enforce_stmt
     jmp .next_token
 
 .check_peek_stmt:
@@ -837,6 +904,41 @@ run_parser:
     mov rsi, msg_err_syntax
     mov rdx, len_err_syntax
     jmp .print_syntax_err
+.check_shift_stmt:
+    add rcx, 3
+    jmp .next_token
+.check_scan_stmt:
+    add rcx, 3
+    jmp .next_token
+.check_cycle_stmt:
+    jmp .next_token
+.check_mold_stmt:
+    add rcx, 2
+    jmp .next_token
+.check_forge_stmt:
+    add rcx, 2
+    jmp .next_token
+.check_view_stmt:
+    add rcx, 1
+    jmp .next_token
+.check_grab_stmt:
+    add rcx, 1
+    jmp .next_token
+.check_pull_stmt:
+    add rcx, 1
+    jmp .next_token
+.check_expose_stmt:
+    add rcx, 1
+    jmp .next_token
+.check_state_stmt:
+    add rcx, 2
+    jmp .next_token
+.check_trap_stmt:
+    add rcx, 1
+    jmp .next_token
+.check_enforce_stmt:
+    add rcx, 1
+    jmp .next_token
 .check_sysret_stmt:
     add rcx, 1
     jmp .next_token
@@ -1671,6 +1773,30 @@ run_codegen:
     je .handle_poke
     cmp byte [rbx + 1], 11          ; give
     je .handle_give
+    cmp byte [rbx + 1], 12          ; shift
+    je .handle_shift
+    cmp byte [rbx + 1], 13          ; scan
+    je .handle_scan
+    cmp byte [rbx + 1], 14          ; cycle
+    je .handle_cycle
+    cmp byte [rbx + 1], 15          ; mold
+    je .handle_mold
+    cmp byte [rbx + 1], 16          ; forge
+    je .handle_forge
+    cmp byte [rbx + 1], 17          ; view
+    je .handle_view
+    cmp byte [rbx + 1], 18          ; grab
+    je .handle_grab
+    cmp byte [rbx + 1], 19          ; pull
+    je .handle_pull
+    cmp byte [rbx + 1], 20          ; expose
+    je .handle_expose
+    cmp byte [rbx + 1], 21          ; state
+    je .handle_state
+    cmp byte [rbx + 1], 22          ; trap
+    je .handle_trap
+    cmp byte [rbx + 1], 23          ; enforce
+    je .handle_enforce
     jmp .text_skip
 
 .handle_poke:
@@ -2566,6 +2692,42 @@ run_codegen:
     mov rsi, newline
     mov rdx, 1
     call write_to_file
+    jmp .text_skip
+
+.handle_shift:
+    add rcx, 3
+    jmp .text_skip
+.handle_scan:
+    add rcx, 3
+    jmp .text_skip
+.handle_cycle:
+    jmp .text_skip
+.handle_mold:
+    add rcx, 2
+    jmp .text_skip
+.handle_forge:
+    add rcx, 2
+    jmp .text_skip
+.handle_view:
+    add rcx, 1
+    jmp .text_skip
+.handle_grab:
+    add rcx, 1
+    jmp .text_skip
+.handle_pull:
+    add rcx, 1
+    jmp .text_skip
+.handle_expose:
+    add rcx, 1
+    jmp .text_skip
+.handle_state:
+    add rcx, 2
+    jmp .text_skip
+.handle_trap:
+    add rcx, 1
+    jmp .text_skip
+.handle_enforce:
+    add rcx, 1
     jmp .text_skip
 
 .check_assign:
@@ -3895,6 +4057,121 @@ process_current_word:
     call string_compare
     cmp rax, 1
     je .found_give
+    mov rdi, word_buffer
+    mov rdx, kw_shift
+    call string_compare
+    cmp rax, 1
+    je .found_shift
+    mov rdi, word_buffer
+    mov rdx, kw_scan
+    call string_compare
+    cmp rax, 1
+    je .found_scan
+    mov rdi, word_buffer
+    mov rdx, kw_cycle
+    call string_compare
+    cmp rax, 1
+    je .found_cycle
+    mov rdi, word_buffer
+    mov rdx, kw_mold
+    call string_compare
+    cmp rax, 1
+    je .found_mold
+    mov rdi, word_buffer
+    mov rdx, kw_forge
+    call string_compare
+    cmp rax, 1
+    je .found_forge
+    mov rdi, word_buffer
+    mov rdx, kw_view
+    call string_compare
+    cmp rax, 1
+    je .found_view
+    mov rdi, word_buffer
+    mov rdx, kw_grab
+    call string_compare
+    cmp rax, 1
+    je .found_grab
+    mov rdi, word_buffer
+    mov rdx, kw_pull
+    call string_compare
+    cmp rax, 1
+    je .found_pull
+    mov rdi, word_buffer
+    mov rdx, kw_expose
+    call string_compare
+    cmp rax, 1
+    je .found_expose
+    mov rdi, word_buffer
+    mov rdx, kw_state
+    call string_compare
+    cmp rax, 1
+    je .found_state
+    mov rdi, word_buffer
+    mov rdx, kw_trap
+    call string_compare
+    cmp rax, 1
+    je .found_trap
+    mov rdi, word_buffer
+    mov rdx, kw_enforce
+    call string_compare
+    cmp rax, 1
+    je .found_enforce
+    mov rdi, word_buffer
+    mov rdx, kw_i8
+    call string_compare
+    cmp rax, 1
+    je .found_i8
+    mov rdi, word_buffer
+    mov rdx, kw_i16
+    call string_compare
+    cmp rax, 1
+    je .found_i16
+    mov rdi, word_buffer
+    mov rdx, kw_i64
+    call string_compare
+    cmp rax, 1
+    je .found_i64
+    mov rdi, word_buffer
+    mov rdx, kw_u8
+    call string_compare
+    cmp rax, 1
+    je .found_u8
+    mov rdi, word_buffer
+    mov rdx, kw_u16
+    call string_compare
+    cmp rax, 1
+    je .found_u16
+    mov rdi, word_buffer
+    mov rdx, kw_u32
+    call string_compare
+    cmp rax, 1
+    je .found_u32
+    mov rdi, word_buffer
+    mov rdx, kw_u64
+    call string_compare
+    cmp rax, 1
+    je .found_u64
+    mov rdi, word_buffer
+    mov rdx, kw_f32
+    call string_compare
+    cmp rax, 1
+    je .found_f32
+    mov rdi, word_buffer
+    mov rdx, kw_f64
+    call string_compare
+    cmp rax, 1
+    je .found_f64
+    mov rdi, word_buffer
+    mov rdx, kw_char
+    call string_compare
+    cmp rax, 1
+    je .found_char
+    mov rdi, word_buffer
+    mov rdx, kw_bool
+    call string_compare
+    cmp rax, 1
+    je .found_bool
 
     call save_string
     mov r8b, 2              
@@ -3992,6 +4269,144 @@ process_current_word:
 .found_give:
     mov r8b, 1
     mov r9b, 11
+    xor r10, r10
+    call store_token
+    jmp .reset_buffer
+.found_shift:
+    mov r8b, 1
+    mov r9b, 12
+    xor r10, r10
+    call store_token
+    jmp .reset_buffer
+.found_scan:
+    mov r8b, 1
+    mov r9b, 13
+    xor r10, r10
+    call store_token
+    jmp .reset_buffer
+.found_cycle:
+    mov r8b, 1
+    mov r9b, 14
+    xor r10, r10
+    call store_token
+    jmp .reset_buffer
+.found_mold:
+    mov r8b, 1
+    mov r9b, 15
+    xor r10, r10
+    call store_token
+    jmp .reset_buffer
+.found_forge:
+    mov r8b, 1
+    mov r9b, 16
+    xor r10, r10
+    call store_token
+    jmp .reset_buffer
+.found_view:
+    mov r8b, 1
+    mov r9b, 17
+    xor r10, r10
+    call store_token
+    jmp .reset_buffer
+.found_grab:
+    mov r8b, 1
+    mov r9b, 18
+    xor r10, r10
+    call store_token
+    jmp .reset_buffer
+.found_pull:
+    mov r8b, 1
+    mov r9b, 19
+    xor r10, r10
+    call store_token
+    jmp .reset_buffer
+.found_expose:
+    mov r8b, 1
+    mov r9b, 20
+    xor r10, r10
+    call store_token
+    jmp .reset_buffer
+.found_state:
+    mov r8b, 4
+    mov r9b, 15
+    xor r10, r10
+    call store_token
+    jmp .reset_buffer
+.found_trap:
+    mov r8b, 1
+    mov r9b, 22
+    xor r10, r10
+    call store_token
+    jmp .reset_buffer
+.found_enforce:
+    mov r8b, 1
+    mov r9b, 23
+    xor r10, r10
+    call store_token
+    jmp .reset_buffer
+.found_i8:
+    mov r8b, 4
+    mov r9b, 4
+    xor r10, r10
+    call store_token
+    jmp .reset_buffer
+.found_i16:
+    mov r8b, 4
+    mov r9b, 5
+    xor r10, r10
+    call store_token
+    jmp .reset_buffer
+.found_i64:
+    mov r8b, 4
+    mov r9b, 6
+    xor r10, r10
+    call store_token
+    jmp .reset_buffer
+.found_u8:
+    mov r8b, 4
+    mov r9b, 7
+    xor r10, r10
+    call store_token
+    jmp .reset_buffer
+.found_u16:
+    mov r8b, 4
+    mov r9b, 8
+    xor r10, r10
+    call store_token
+    jmp .reset_buffer
+.found_u32:
+    mov r8b, 4
+    mov r9b, 9
+    xor r10, r10
+    call store_token
+    jmp .reset_buffer
+.found_u64:
+    mov r8b, 4
+    mov r9b, 10
+    xor r10, r10
+    call store_token
+    jmp .reset_buffer
+.found_f32:
+    mov r8b, 4
+    mov r9b, 11
+    xor r10, r10
+    call store_token
+    jmp .reset_buffer
+.found_f64:
+    mov r8b, 4
+    mov r9b, 12
+    xor r10, r10
+    call store_token
+    jmp .reset_buffer
+.found_char:
+    mov r8b, 4
+    mov r9b, 13
+    xor r10, r10
+    call store_token
+    jmp .reset_buffer
+.found_bool:
+    mov r8b, 4
+    mov r9b, 14
     xor r10, r10
     call store_token
     jmp .reset_buffer
