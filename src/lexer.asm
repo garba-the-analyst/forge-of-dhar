@@ -33,6 +33,7 @@ section .data
     kw_sysret db "sysret", 0
     kw_poke db "poke", 0
     kw_give db "give", 0
+    kw_gen db "gen", 0
     kw_shift db "shift", 0
     kw_scan db "scan", 0
     kw_cycle db "cycle", 0
@@ -836,6 +837,8 @@ run_parser:
     je .check_poke_stmt
     cmp r9b, 11                     ; give
     je .check_give_stmt
+    cmp r9b, 25                     ; gen
+    je .check_gen_stmt
     cmp r9b, 12                     ; shift
     je .check_shift_stmt
     cmp r9b, 13                     ; scan
@@ -907,6 +910,10 @@ run_parser:
     mov rsi, msg_err_syntax
     mov rdx, len_err_syntax
     jmp .print_syntax_err
+.check_gen_stmt:
+    ; gen("string") or gen(expr) - consume opening paren, string/expr, closing paren
+    add rcx, 3
+    jmp .next_token
 .check_shift_stmt:
     add rcx, 3
     jmp .next_token
@@ -1847,6 +1854,8 @@ run_codegen:
     je .handle_trap
     cmp byte [rbx + 1], 23          ; enforce
     je .handle_enforce
+    cmp byte [rbx + 1], 25          ; gen
+    je .handle_gen
     jmp .text_skip
 
 .handle_poke:
@@ -2772,6 +2781,76 @@ run_codegen:
     jmp .text_skip
 .handle_grab:
     add rcx, 1
+    jmp .text_skip
+.handle_gen:
+    ; gen("string") - emit sys_write syscall for the string literal
+    mov rax, rcx
+    inc rax
+    cmp rax, [token_count]
+    jge .text_skip
+    shl rax, 4
+    lea r12, [token_array + rax]
+    ; Expect '(' (operator subtype 2)
+    cmp byte [r12], 3
+    jne .text_skip
+    cmp byte [r12 + 1], 2
+    jne .text_skip
+    ; Next should be string literal (type 6)
+    mov rax, rcx
+    add rax, 2
+    cmp rax, [token_count]
+    jge .text_skip
+    ; Save string token index in r14 (not byte offset)
+    mov r14, rax
+    ; Emit sys_write: mov rax,1; mov rdi,1; mov rsi,str; mov rdx,len; syscall
+    mov rsi, asm_mov_rax_lit
+    mov rdx, len_asm_mov_rax_lit
+    call write_to_file
+    mov rax, 1
+    call write_rax_to_file
+    mov rsi, newline
+    mov rdx, 1
+    call write_to_file
+
+    mov rsi, asm_mov_rdi_lit
+    mov rdx, len_asm_mov_rdi_lit
+    call write_to_file
+    mov rax, 1
+    call write_rax_to_file
+    mov rsi, newline
+    mov rdx, 1
+    call write_to_file
+
+    mov rsi, asm_mov_rsi_lit
+    mov rdx, len_asm_mov_rsi_lit
+    call write_to_file
+    mov rsi, asm_str_prefix
+    mov rdx, len_asm_str_prefix
+    call write_to_file
+    mov rax, r14
+    call write_rax_to_file
+    mov rsi, newline
+    mov rdx, 1
+    call write_to_file
+
+    mov rsi, asm_mov_rdx_lit
+    mov rdx, len_asm_mov_rdx_lit
+    call write_to_file
+    ; Get string token byte offset for get_strlen
+    mov rax, r14
+    shl rax, 4
+    lea r12, [token_array + rax]
+    mov rdi, [r12 + 8]
+    call get_strlen
+    mov rax, rax
+    call write_rax_to_file
+    mov rsi, newline
+    mov rdx, 1
+    call write_to_file
+
+    mov rsi, asm_syscall
+    mov rdx, len_asm_syscall
+    call write_to_file
     jmp .text_skip
 .handle_pull:
     add rcx, 1
@@ -4183,6 +4262,11 @@ process_current_word:
     cmp rax, 1
     je .found_give
     mov rdi, word_buffer
+    mov rdx, kw_gen
+    call string_compare
+    cmp rax, 1
+    je .found_gen
+    mov rdi, word_buffer
     mov rdx, kw_shift
     call string_compare
     cmp rax, 1
@@ -4394,6 +4478,12 @@ process_current_word:
 .found_give:
     mov r8b, 1
     mov r9b, 11
+    xor r10, r10
+    call store_token
+    jmp .reset_buffer
+.found_gen:
+    mov r8b, 1
+    mov r9b, 25
     xor r10, r10
     call store_token
     jmp .reset_buffer
