@@ -1046,13 +1046,56 @@ run_parser:
     lea r12, [token_array + rax]
     cmp byte [r12], 4               
     jne .err_syntax
-    mov r11b, [r12 + 1]
+    mov r11b, [r12 + 1]              ; base type (i32=1, str=2, raw=3)
 
+    ; Default: consume 3 tokens (name, colon, type)
+    mov rdi, 3
+
+    ; Check for raw[N] syntax: next token should be '[' (subtype 8)
+    mov rax, rcx
+    add rax, 4
+    cmp rax, [token_count]
+    jge .param_type_done
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 3
+    jne .param_type_done
+    cmp byte [r12 + 1], 8            ; '['
+    jne .param_type_done
+
+    ; Found raw[N] - parse size
+    mov rax, rcx
+    add rax, 5
+    cmp rax, [token_count]
+    jge .err_var_type
+    shl rax, 4
+    lea r8, [token_array + rax]
+    cmp byte [r8], 5                 ; number
+    jne .err_var_type
+
+    mov r10, [r8 + 8]                ; array size
+    mov r15w, r10w                   ; store size in symbol field
+
+    mov rax, rcx
+    add rax, 6
+    cmp rax, [token_count]
+    jge .err_var_type
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 3
+    jne .err_var_type
+    cmp byte [r12 + 1], 9            ; ']'
+    jne .err_var_type
+
+    add r11b, 10                     ; flag as array type (raw[5] -> subtype 13)
+    add rdi, 3                       ; consumed 3 extra tokens
+
+.param_type_done:
     mov r8b, 5                      
     mov r9b, r11b
     xor r10, r10
     call add_symbol
-    add rcx, 3
+    add rcx, rdi
 
     mov rax, rcx
     inc rax
