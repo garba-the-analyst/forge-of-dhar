@@ -1333,7 +1333,212 @@ run_parser:
     jne .err_syntax
     jmp .vtc_walk
 .vtc_close:
-    mov rcx, r8                     ; park on ')': .next_token completes consumption
+    ; Manually emit call with args for standalone calls
+    ; rbx = callee token, r8 = index of ')'
+    push r10
+    push r9
+    push r13
+    push r15
+    
+    ; Find callee name
+    mov r13, rbx
+    mov rdi, [r13 + 8]
+    call get_strlen
+    mov rdx, rax
+    mov rsi, rdi
+    mov rsi, asm_call
+    mov rdx, len_asm_call
+    call write_to_file
+    mov rsi, rdi
+    mov rdx, rax
+    call write_to_file
+    mov rsi, newline
+    mov rdx, 1
+    call write_to_file
+    
+    ; Walk args from token after '(' to before ')'
+    mov r10, rcx
+    inc r10                         ; '('
+    xor r9, r9                      ; arg ordinal
+.ecs_walk2:
+    inc r10
+    cmp r10, r8                     ; reached ')'?
+    je .ecs_done2
+    mov rax, r10
+    shl rax, 4
+    lea r13, [token_array + rax]
+    cmp byte [r13], 2               ; identifier arg
+    je .ecs_arg2
+    cmp byte [r13], 5               ; numeric literal
+    je .ecs_lit2
+    cmp byte [r13], 6               ; string literal
+    je .ecs_str2
+    jmp .ecs_next2
+.ecs_arg2:
+    ; identifier arg -> mov <reg>, qword [name]
+    ; Select register based on r9
+    cmp r9, 0
+    je .ecs2_rdi
+    cmp r9, 1
+    je .ecs2_rsi
+    cmp r9, 2
+    je .ecs2_rdx
+    cmp r9, 3
+    je .ecs2_rcx
+    cmp r9, 4
+    je .ecs2_r8
+    ; r9
+    mov rsi, asm_mov_r9_l
+    mov rdx, len_asm_mov_r9_l
+    jmp .ecs2_reg_done
+.ecs2_rdi:
+    mov rsi, asm_mov_rdi_l
+    mov rdx, len_asm_mov_rdi_l
+    jmp .ecs2_reg_done
+.ecs2_rsi:
+    mov rsi, asm_mov_rsi_l
+    mov rdx, len_asm_mov_rsi_l
+    jmp .ecs2_reg_done
+.ecs2_rdx:
+    mov rsi, asm_mov_rdx_l
+    mov rdx, len_asm_mov_rdx_l
+    jmp .ecs2_reg_done
+.ecs2_rcx:
+    mov rsi, asm_mov_rcx_l
+    mov rdx, len_asm_mov_rcx_l
+    jmp .ecs2_reg_done
+.ecs2_r8:
+    mov rsi, asm_mov_r8_l
+    mov rdx, len_asm_mov_r8_l
+    jmp .ecs2_reg_done
+.ecs2_reg_done:
+    call write_to_file
+    push r9
+    mov rdi, [r13 + 8]
+    call emit_named_operand
+    pop r9
+    mov rsi, asm_close_bracket_nl
+    mov rdx, len_asm_close_bracket_nl
+    call write_to_file
+    jmp .ecs_next2
+.ecs_lit2:
+    ; numeric literal
+    cmp r9, 0
+    je .ecs2_lit_rdi
+    cmp r9, 1
+    je .ecs2_lit_rsi
+    cmp r9, 2
+    je .ecs2_lit_rdx
+    cmp r9, 3
+    je .ecs2_lit_rcx
+    cmp r9, 4
+    je .ecs2_lit_r8
+    mov rsi, asm_mov_r9_l
+    mov rdx, len_asm_mov_r9_l
+    jmp .ecs2_lit_reg_done
+.ecs2_lit_rdi:
+    mov rsi, asm_mov_rdi_lit
+    mov rdx, len_asm_mov_rdi_lit
+    jmp .ecs2_lit_reg_done
+.ecs2_lit_rsi:
+    mov rsi, asm_mov_rsi_lit
+    mov rdx, len_asm_mov_rsi_lit
+    jmp .ecs2_lit_reg_done
+.ecs2_lit_rdx:
+    mov rsi, asm_mov_rdx_lit
+    mov rdx, len_asm_mov_rdx_lit
+    jmp .ecs2_lit_reg_done
+.ecs2_lit_rcx:
+    mov rsi, asm_mov_rcx_lit
+    mov rdx, len_asm_mov_rcx_lit
+    jmp .ecs2_lit_reg_done
+.ecs2_lit_r8:
+    mov rsi, asm_mov_r8_lit
+    mov rdx, len_asm_mov_r8_lit
+    jmp .ecs2_lit_reg_done
+.ecs2_lit_reg_done:
+    call write_to_file
+    mov rdi, [r13 + 8]
+    call get_strlen
+    mov rdx, rax
+    mov rsi, rdi
+    call write_to_file
+    mov rsi, newline
+    mov rdx, 1
+    call write_to_file
+    jmp .ecs_next2
+.ecs_str2:
+    ; string literal
+    cmp r9, 0
+    je .ecs2_str_rdi
+    cmp r9, 1
+    je .ecs2_str_rsi
+    cmp r9, 2
+    je .ecs2_str_rdx
+    cmp r9, 3
+    je .ecs2_str_rcx
+    cmp r9, 4
+    je .ecs2_str_r8
+    mov rsi, asm_mov_r9_l
+    mov rdx, len_asm_mov_r9_l
+    jmp .ecs2_str_reg_done
+.ecs2_str_rdi:
+    mov rsi, asm_mov_rdi_l
+    mov rdx, len_asm_mov_rdi_l
+    jmp .ecs2_str_reg_done
+.ecs2_str_rsi:
+    mov rsi, asm_mov_rsi_l
+    mov rdx, len_asm_mov_rsi_l
+    jmp .ecs2_str_reg_done
+.ecs2_str_rdx:
+    mov rsi, asm_mov_rdx_l
+    mov rdx, len_asm_mov_rdx_l
+    jmp .ecs2_str_reg_done
+.ecs2_str_rcx:
+    mov rsi, asm_mov_rcx_l
+    mov rdx, len_asm_mov_rcx_l
+    jmp .ecs2_str_reg_done
+.ecs2_str_r8:
+    mov rsi, asm_mov_r8_l
+    mov rdx, len_asm_mov_r8_l
+    jmp .ecs2_str_reg_done
+.ecs2_str_reg_done:
+    call write_to_file
+    mov rsi, asm_str_prefix
+    mov rdx, len_asm_str_prefix
+    call write_to_file
+    mov rax, r10
+    call write_rax_to_file
+    mov rsi, newline
+    mov rdx, 1
+    call write_to_file
+    jmp .ecs_next2
+.ecs_next2:
+    inc r9
+    cmp r9, 6
+    jge .ecs_done2
+    jmp .ecs_walk2
+.ecs_done2:
+    ; Emit call
+    mov rsi, asm_call
+    mov rdx, len_asm_call
+    call write_to_file
+    mov r13, rbx
+    mov rdi, [r13 + 8]
+    call get_strlen
+    mov rdx, rax
+    mov rsi, rdi
+    call write_to_file
+    mov rsi, newline
+    mov rdx, 1
+    call write_to_file
+    
+    pop r15
+    pop r13
+    pop r9
+    pop r10
+    mov rcx, r8                     ; park on ')'
+    inc rcx
     jmp .next_token
 
 .valid_assign:
@@ -1460,7 +1665,6 @@ emit_call_sequence:
     lea rax, [token_array + rax]
     mov [ecs_callee_tok], rax
     mov r10, rcx
-    inc r10
     inc r10                         ; '('
     xor r9, r9                      ; ordinal
     xor r8, r8                      ; paren depth
@@ -3745,6 +3949,9 @@ pf_mark_local:
     call find_symbol_scoped
     cmp rax, 1
     jne .pml_exit
+    ; Skip if already has offset assigned (e.g., parameters handled in add_symbol)
+    cmp dword [rdx + 16], 0
+    jne .pml_exit
     or byte [rdx + 9], 0x80         ; local flag = subtype bit7
     inc qword [scan_frame_off]
     mov rax, [scan_frame_off]
@@ -4147,18 +4354,16 @@ add_symbol:
     mov qword [rbx + 16], 0         
     mov [rbx + 24], r10             
     
-    ; V0.4.1: auto-mark task-local variables (owner>0, not parameter, not task decl)
+    ; V0.4.1: auto-mark task-local variables (owner>0, not task decl)
     test eax, eax
     jz .as_no_local
-    cmp byte [rbx + 8], 5           ; parameter type?
-    je .as_no_local
     cmp byte [rbx + 9], 0           ; task declaration (subtype=0)?
     je .as_no_local
     or byte [rbx + 9], 0x80         ; mark as local (stack-allocated)
+    inc qword [local_counts + rax*8 - 8] ; increment local count for this task (1-indexed)
     mov r10, [local_counts + rax*8 - 8] ; get current local count
     shl r10, 3                      ; offset = count * 8
     mov [rbx + 16], r10d            ; assign stack offset
-    inc qword [local_counts + rax*8 - 8] ; increment local count for this task (1-indexed)
 .as_no_local:
     
     inc qword [symbol_count]
