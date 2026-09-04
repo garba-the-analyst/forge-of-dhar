@@ -321,6 +321,8 @@ section .bss
     ecs_callee_tok resq 1           ; V0.3.0 callee token ptr during call emission
     cg_ret_label resq 1             ; label id of current task's epilogue
     in_task_flag resb 1
+    mold_owner resq 1                ; V0.3.1: owner for mold fields
+    mold_depth resq 1               ; track mold nesting depth
     parse_task_counter resq 1       ; V0.3.0 scoping: task ordinal at parse time
     cur_owner resq 1                ; V0.3.0 scoping: current declaration owner
 
