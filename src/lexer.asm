@@ -312,6 +312,7 @@ section .bss
 
     ; --- V0.3.0 Stack-frame machinery ---
     frame_offsets resq 256          ; per-task frame sizes (bytes), 1-indexed
+    local_counts resq 256           ; per-task local variable counts
     task_frame_count resq 1
     scan_in_task resq 1
     scan_task_indent resd 1
@@ -1651,6 +1652,10 @@ run_codegen:
     je .bss_skip
     test byte [rbx + 9], 0x80       ; V0.3.0: stack locals are not globals
     jnz .bss_skip
+    cmp dword [rbx + 20], 0         ; V0.4.1: owner=0 -> global, owner>0 -> task-local
+    jne .bss_skip
+    cmp dword [rbx + 16], 0         ; V0.4.1: stack offset=0 -> global, !=0 -> local
+    jne .bss_skip
 
     mov rdi, [rbx]          
     call get_strlen
@@ -2112,12 +2117,21 @@ run_codegen:
     inc qword [cg_cur_task]
     mov rax, [cg_cur_task]
     mov [cg_ret_label], rax
+    mov r10, rax                      ; save task ordinal
     mov byte [in_task_flag], 1
     push rcx                        ; SAVE token index (rcx is the parse cursor!)
     mov rsi, asm_prologue
     mov rdx, len_asm_prologue
     call write_to_file
-    mov rax, [frame_offsets + rax*8 - 8]  ; frame size for THIS ordinal
+    mov rax, [frame_offsets + r10*8 - 8]  ; frame size for THIS ordinal
+    test rax, rax
+    jnz .prologue_got_frame
+    mov rax, [local_counts + r10*8 - 8]   ; fallback: local count * 8
+    shl rax, 3
+    add rax, 15
+    and rax, -16
+    mov [frame_offsets + r10*8 - 8], rax  ; cache it
+.prologue_got_frame:
     call write_rax_to_file          ; preserves rcx
     mov rsi, newline
     mov rdx, 1
@@ -3595,14 +3609,18 @@ precompute_frames:
     ret
 
 ; --- helper: rdi = identifier string -> flag symbol local, assign slot ---
+; Uses scan_task_id as owner to find the correct symbol in multi-task scope
 pf_mark_local:
     push rax
     push rdx
     push rdi
     push rcx
     push r13
-    mov r13, rdi                    ; find_symbol contract
-    call find_symbol
+    push r14
+    mov r13, rdi                    ; name ptr
+    mov r14, [scan_task_id]         ; current task owner
+    mov [cur_owner], r14            ; set for scoped find
+    call find_symbol_scoped
     cmp rax, 1
     jne .pml_exit
     or byte [rdx + 9], 0x80         ; local flag = subtype bit7
@@ -3612,9 +3630,10 @@ pf_mark_local:
     mov [rdx + 16], eax             ; positive distance below rbp (32-bit)
     add rax, 15
     and rax, -16                    ; pad frame to 16 bytes
-    mov rdx, [scan_task_id]
+    mov rdx, r14
     mov [frame_offsets + rdx*8 - 8], rax
 .pml_exit:
+    pop r14
     pop r13
     pop rcx
     pop rdi
@@ -3947,9 +3966,52 @@ check_symbol_collision_scoped:
     mov rax, 0
     ret
 
+; V0.4.1: find symbol by name AND owner (for marking locals in correct task)
+find_symbol_scoped:
+    push rcx
+    push rbx
+    push rdi
+    push r8
+    push r12
+    mov r12, rdi                    ; name ptr
+    xor r8, r8                      
+.fss_loop:
+    cmp r8, [symbol_count]
+    jge .fss_fail
+    mov rax, r8
+    shl rax, 5                      
+    lea rbx, [symbol_table + rax]
+    mov rdx, [rbx]                  
+    mov rdi, r12                    
+    call string_compare
+    cmp rax, 1
+    jne .fss_next
+    mov eax, [rbx + 20]             ; symbol's owner
+    cmp eax, [cur_owner]            ; compare with requested owner
+    je .fss_success
+.fss_next:
+    inc r8
+    jmp .fss_loop
+.fss_fail:
+    mov rax, 0
+    jmp .fss_exit
+.fss_success:
+    mov rax, 1
+    mov rdx, rbx                    
+.fss_exit:
+    pop r12
+    pop r8
+    pop rdi
+    pop rbx
+    pop rcx
+    ret
+
 add_symbol:
     push rax
     push rbx
+    push rcx
+    push rdx
+    push r10
     mov rax, [symbol_count]
     shl rax, 5                      
     lea rbx, [symbol_table + rax]
@@ -3962,7 +4024,25 @@ add_symbol:
     mov [rbx + 20], eax             ; V0.3.0 owner task id
     mov qword [rbx + 16], 0         
     mov [rbx + 24], r10             
+    
+    ; V0.4.1: auto-mark task-local variables (owner>0, not parameter, not task decl)
+    test eax, eax
+    jz .as_no_local
+    cmp byte [rbx + 8], 5           ; parameter type?
+    je .as_no_local
+    cmp byte [rbx + 9], 0           ; task declaration (subtype=0)?
+    je .as_no_local
+    or byte [rbx + 9], 0x80         ; mark as local (stack-allocated)
+    mov r10, [local_counts + rax*8 - 8] ; get current local count
+    shl r10, 3                      ; offset = count * 8
+    mov [rbx + 16], r10d            ; assign stack offset
+    inc qword [local_counts + rax*8 - 8] ; increment local count for this task (1-indexed)
+.as_no_local:
+    
     inc qword [symbol_count]
+    pop r10
+    pop rdx
+    pop rcx
     pop rbx
     pop rax
     ret
