@@ -377,6 +377,7 @@ _start:
     mov qword [cf_sp], 0
     mov qword [label_id_counter], 1
     mov byte [last_token_type], 0
+    mov qword [cur_owner], 0
 
     mov rax, 2              
     mov rdi, r12      
@@ -1285,7 +1286,8 @@ run_parser:
 .valid_task_call:
     mov r13, [rbx + 8]              
     mov r14d, [rbx + 4]             
-    call find_symbol
+    mov rdi, r13                     ; name ptr for find_symbol_scoped
+    call find_symbol_scoped
     cmp rax, 0
     je .err_undeclared
 
@@ -1333,212 +1335,7 @@ run_parser:
     jne .err_syntax
     jmp .vtc_walk
 .vtc_close:
-    ; Manually emit call with args for standalone calls
-    ; rbx = callee token, r8 = index of ')'
-    push r10
-    push r9
-    push r13
-    push r15
-    
-    ; Find callee name
-    mov r13, rbx
-    mov rdi, [r13 + 8]
-    call get_strlen
-    mov rdx, rax
-    mov rsi, rdi
-    mov rsi, asm_call
-    mov rdx, len_asm_call
-    call write_to_file
-    mov rsi, rdi
-    mov rdx, rax
-    call write_to_file
-    mov rsi, newline
-    mov rdx, 1
-    call write_to_file
-    
-    ; Walk args from token after '(' to before ')'
-    mov r10, rcx
-    inc r10                         ; '('
-    xor r9, r9                      ; arg ordinal
-.ecs_walk2:
-    inc r10
-    cmp r10, r8                     ; reached ')'?
-    je .ecs_done2
-    mov rax, r10
-    shl rax, 4
-    lea r13, [token_array + rax]
-    cmp byte [r13], 2               ; identifier arg
-    je .ecs_arg2
-    cmp byte [r13], 5               ; numeric literal
-    je .ecs_lit2
-    cmp byte [r13], 6               ; string literal
-    je .ecs_str2
-    jmp .ecs_next2
-.ecs_arg2:
-    ; identifier arg -> mov <reg>, qword [name]
-    ; Select register based on r9
-    cmp r9, 0
-    je .ecs2_rdi
-    cmp r9, 1
-    je .ecs2_rsi
-    cmp r9, 2
-    je .ecs2_rdx
-    cmp r9, 3
-    je .ecs2_rcx
-    cmp r9, 4
-    je .ecs2_r8
-    ; r9
-    mov rsi, asm_mov_r9_l
-    mov rdx, len_asm_mov_r9_l
-    jmp .ecs2_reg_done
-.ecs2_rdi:
-    mov rsi, asm_mov_rdi_l
-    mov rdx, len_asm_mov_rdi_l
-    jmp .ecs2_reg_done
-.ecs2_rsi:
-    mov rsi, asm_mov_rsi_l
-    mov rdx, len_asm_mov_rsi_l
-    jmp .ecs2_reg_done
-.ecs2_rdx:
-    mov rsi, asm_mov_rdx_l
-    mov rdx, len_asm_mov_rdx_l
-    jmp .ecs2_reg_done
-.ecs2_rcx:
-    mov rsi, asm_mov_rcx_l
-    mov rdx, len_asm_mov_rcx_l
-    jmp .ecs2_reg_done
-.ecs2_r8:
-    mov rsi, asm_mov_r8_l
-    mov rdx, len_asm_mov_r8_l
-    jmp .ecs2_reg_done
-.ecs2_reg_done:
-    call write_to_file
-    push r9
-    mov rdi, [r13 + 8]
-    call emit_named_operand
-    pop r9
-    mov rsi, asm_close_bracket_nl
-    mov rdx, len_asm_close_bracket_nl
-    call write_to_file
-    jmp .ecs_next2
-.ecs_lit2:
-    ; numeric literal
-    cmp r9, 0
-    je .ecs2_lit_rdi
-    cmp r9, 1
-    je .ecs2_lit_rsi
-    cmp r9, 2
-    je .ecs2_lit_rdx
-    cmp r9, 3
-    je .ecs2_lit_rcx
-    cmp r9, 4
-    je .ecs2_lit_r8
-    mov rsi, asm_mov_r9_l
-    mov rdx, len_asm_mov_r9_l
-    jmp .ecs2_lit_reg_done
-.ecs2_lit_rdi:
-    mov rsi, asm_mov_rdi_lit
-    mov rdx, len_asm_mov_rdi_lit
-    jmp .ecs2_lit_reg_done
-.ecs2_lit_rsi:
-    mov rsi, asm_mov_rsi_lit
-    mov rdx, len_asm_mov_rsi_lit
-    jmp .ecs2_lit_reg_done
-.ecs2_lit_rdx:
-    mov rsi, asm_mov_rdx_lit
-    mov rdx, len_asm_mov_rdx_lit
-    jmp .ecs2_lit_reg_done
-.ecs2_lit_rcx:
-    mov rsi, asm_mov_rcx_lit
-    mov rdx, len_asm_mov_rcx_lit
-    jmp .ecs2_lit_reg_done
-.ecs2_lit_r8:
-    mov rsi, asm_mov_r8_lit
-    mov rdx, len_asm_mov_r8_lit
-    jmp .ecs2_lit_reg_done
-.ecs2_lit_reg_done:
-    call write_to_file
-    mov rdi, [r13 + 8]
-    call get_strlen
-    mov rdx, rax
-    mov rsi, rdi
-    call write_to_file
-    mov rsi, newline
-    mov rdx, 1
-    call write_to_file
-    jmp .ecs_next2
-.ecs_str2:
-    ; string literal
-    cmp r9, 0
-    je .ecs2_str_rdi
-    cmp r9, 1
-    je .ecs2_str_rsi
-    cmp r9, 2
-    je .ecs2_str_rdx
-    cmp r9, 3
-    je .ecs2_str_rcx
-    cmp r9, 4
-    je .ecs2_str_r8
-    mov rsi, asm_mov_r9_l
-    mov rdx, len_asm_mov_r9_l
-    jmp .ecs2_str_reg_done
-.ecs2_str_rdi:
-    mov rsi, asm_mov_rdi_l
-    mov rdx, len_asm_mov_rdi_l
-    jmp .ecs2_str_reg_done
-.ecs2_str_rsi:
-    mov rsi, asm_mov_rsi_l
-    mov rdx, len_asm_mov_rsi_l
-    jmp .ecs2_str_reg_done
-.ecs2_str_rdx:
-    mov rsi, asm_mov_rdx_l
-    mov rdx, len_asm_mov_rdx_l
-    jmp .ecs2_str_reg_done
-.ecs2_str_rcx:
-    mov rsi, asm_mov_rcx_l
-    mov rdx, len_asm_mov_rcx_l
-    jmp .ecs2_str_reg_done
-.ecs2_str_r8:
-    mov rsi, asm_mov_r8_l
-    mov rdx, len_asm_mov_r8_l
-    jmp .ecs2_str_reg_done
-.ecs2_str_reg_done:
-    call write_to_file
-    mov rsi, asm_str_prefix
-    mov rdx, len_asm_str_prefix
-    call write_to_file
-    mov rax, r10
-    call write_rax_to_file
-    mov rsi, newline
-    mov rdx, 1
-    call write_to_file
-    jmp .ecs_next2
-.ecs_next2:
-    inc r9
-    cmp r9, 6
-    jge .ecs_done2
-    jmp .ecs_walk2
-.ecs_done2:
-    ; Emit call
-    mov rsi, asm_call
-    mov rdx, len_asm_call
-    call write_to_file
-    mov r13, rbx
-    mov rdi, [r13 + 8]
-    call get_strlen
-    mov rdx, rax
-    mov rsi, rdi
-    call write_to_file
-    mov rsi, newline
-    mov rdx, 1
-    call write_to_file
-    
-    pop r15
-    pop r13
-    pop r9
-    pop r10
-    mov rcx, r8                     ; park on ')'
-    inc rcx
+    mov rcx, r8                     ; park on ')': .next_token completes consumption
     jmp .next_token
 
 .valid_assign:
@@ -2100,7 +1897,7 @@ run_codegen:
     lea r12, [token_array + rax]
     mov rdi, [r12 + 8]
     mov r13, rdi
-    call find_symbol
+    call find_symbol_scoped
     cmp rax, 1
     jne .pk_buf_global
     test byte [rdx + 9], 0x80
@@ -2206,7 +2003,7 @@ run_codegen:
     ; V0.3.0: local buffers are frame-resident -> lea rsi, [rbp-N]
     mov rdi, [r12 + 8]
     mov r13, rdi
-    call find_symbol
+    call find_symbol_scoped
     cmp rax, 1
     jne .peek_buf_global
     test byte [rdx + 9], 0x80
@@ -2373,6 +2170,7 @@ run_codegen:
     inc qword [cg_cur_task]
     mov rax, [cg_cur_task]
     mov [cg_ret_label], rax
+    mov [cur_owner], rax              ; sync cur_owner with cg_cur_task for scoped lookups
     mov r10, rax                      ; save task ordinal
     mov byte [in_task_flag], 1
     push rcx                        ; SAVE token index (rcx is the parse cursor!)
@@ -2415,7 +2213,7 @@ run_codegen:
     mov r14, r13                    ; save token ptr
     mov rdi, [r13 + 8]
     mov r13, rdi
-    call find_symbol                ; -> rdx = symbol
+    call find_symbol_scoped         ; -> rdx = symbol
     cmp rax, 1
     jne .spill_walk_adv
     mov eax, [rdx + 16]           ; slot distance
@@ -2705,7 +2503,8 @@ run_codegen:
 
     push r13
     mov r13, [r13 + 8]
-    call find_symbol
+    mov rdi, r13
+    call find_symbol_scoped
     pop r13
     cmp rax, 1
     jne .sys_rdi_normal
@@ -2765,7 +2564,8 @@ run_codegen:
 
     push r13
     mov r13, [r13 + 8]
-    call find_symbol
+    mov rdi, r13
+    call find_symbol_scoped
     pop r13
     cmp rax, 1
     jne .sys_rsi_normal
@@ -2839,7 +2639,8 @@ run_codegen:
 
     push r13
     mov r13, [r13 + 8]
-    call find_symbol
+    mov rdi, r13
+    call find_symbol_scoped
     pop r13
     cmp rax, 1
     jne .sys_rdx_normal
@@ -3943,10 +3744,9 @@ pf_mark_local:
     push rcx
     push r13
     push r14
-    mov r13, rdi                    ; name ptr
     mov r14, [scan_task_id]         ; current task owner
     mov [cur_owner], r14            ; set for scoped find
-    call find_symbol_scoped
+    call find_symbol_scoped         ; rdi already has name ptr
     cmp rax, 1
     jne .pml_exit
     ; Skip if already has offset assigned (e.g., parameters handled in add_symbol)
@@ -3984,7 +3784,7 @@ emit_named_operand:
     push r13
     mov r8, rdi                     ; name ptr (find_symbol preserves r8)
     mov r13, rdi
-    call find_symbol
+    call find_symbol_scoped
     cmp rax, 1
     jne .eno_plain
     test byte [rdx + 9], 0x80
@@ -4318,6 +4118,8 @@ find_symbol_scoped:
     mov eax, [rbx + 20]             ; symbol's owner
     cmp eax, [cur_owner]            ; compare with requested owner
     je .fss_success
+    cmp eax, 0                      ; also match globals (owner=0)
+    je .fss_success
 .fss_next:
     inc r8
     jmp .fss_loop
@@ -4349,8 +4151,16 @@ add_symbol:
     mov [rbx + 9], r9b              
     mov [rbx + 10], r15w            
     mov [rbx + 12], r14d            
+    ; Tasks (subtype=0) are always global (owner=0)
+    cmp r9b, 0
+    je .as_task_global
     mov eax, [cur_owner]
     mov [rbx + 20], eax             ; V0.3.0 owner task id
+    jmp .as_owner_set
+.as_task_global:
+    mov qword [rbx + 20], 0         ; tasks are global
+    xor eax, eax                    ; ensure eax=0 for local check
+.as_owner_set:
     mov qword [rbx + 16], 0         
     mov [rbx + 24], r10             
     
