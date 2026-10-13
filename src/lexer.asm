@@ -2544,8 +2544,10 @@ run_codegen:
     pop r13
     cmp rax, 1
     jne .sys_rdi_normal
-    cmp byte [rdx + 9], 3      
-    jne .sys_rdi_normal
+    mov al, [rdx + 9]               ; Phase 1.3: mask locality bit — raw is raw
+    and al, 0x7F                    ; (local raw is 0x83, global raw is 3);
+    cmp al, 3                       ; unmasked check passed locals to the
+    jne .sys_rdi_normal             ; value path (content as pointer -> silence)
     test byte [rdx + 9], 0x80          
     jz .sys_rdi_lit
     push rdx
@@ -2560,8 +2562,8 @@ run_codegen:
     pop rdx
     mov eax, [rdx + 16]
     call write_rax_to_file
-    mov rsi, asm_spill_close_rdi
-    mov rdx, len_asm_spill_close_rdi
+    mov rsi, asm_close_bracket_nl   ; lea closes with plain "]" (not the spill suffix)
+    mov rdx, len_asm_close_bracket_nl
     call write_to_file
     jmp .sys_rsi
 .sys_rdi_normal:
@@ -2605,7 +2607,9 @@ run_codegen:
     pop r13
     cmp rax, 1
     jne .sys_rsi_normal
-    cmp byte [rdx + 9], 3      
+    mov al, [rdx + 9]               ; Phase 1.3: mask locality bit (see .sys_rdi)
+    and al, 0x7F
+    cmp al, 3
     jne .sys_rsi_normal
     test byte [rdx + 9], 0x80          
     jz .sys_rsi_lit
@@ -2621,8 +2625,8 @@ run_codegen:
     pop rdx
     mov eax, [rdx + 16]
     call write_rax_to_file
-    mov rsi, asm_spill_close_rsi
-    mov rdx, len_asm_spill_close_rsi
+    mov rsi, asm_close_bracket_nl   ; lea closes with plain "]" (not the spill suffix)
+    mov rdx, len_asm_close_bracket_nl
     call write_to_file
     jmp .sys_rdx
 .sys_rsi_normal:
@@ -2680,7 +2684,9 @@ run_codegen:
     pop r13
     cmp rax, 1
     jne .sys_rdx_normal
-    cmp byte [rdx + 9], 3      
+    mov al, [rdx + 9]               ; Phase 1.3: mask locality bit (see .sys_rdi)
+    and al, 0x7F
+    cmp al, 3
     jne .sys_rdx_normal
     test byte [rdx + 9], 0x80          
     jz .sys_rdx_lit
@@ -2696,8 +2702,8 @@ run_codegen:
     pop rdx
     mov eax, [rdx + 16]
     call write_rax_to_file
-    mov rsi, asm_spill_close_rdx
-    mov rdx, len_asm_spill_close_rdx
+    mov rsi, asm_close_bracket_nl   ; lea closes with plain "]" (not the spill suffix)
+    mov rdx, len_asm_close_bracket_nl
     call write_to_file
     jmp .sys_emit
 .sys_rdx_normal:
@@ -3230,8 +3236,11 @@ run_codegen:
     jmp .text_skip
 
 .emit_sys_assign:
+    ; Phase 1.3: token math. Value form is dest(0) =(1) sys(2) ((3) nr(4) ,(5)
+    ; a1(6) ,(7) a2(8) ,(9) a3(10) )(11); the old 3/5/7/9 ignored '(' and
+    ; crashed dharc (emit with null operand, truncated output.asm).
     mov rax, rcx
-    add rax, 3
+    add rax, 4
     shl rax, 4
     lea r14, [token_array + rax]
     
@@ -3260,11 +3269,55 @@ run_codegen:
     call write_to_file
 .sys_a_rdi:
     mov rax, rcx
-    add rax, 5
+    add rax, 6
     shl rax, 4
     lea r14, [token_array + rax]
     cmp byte [r14], 5
     je .sys_a_rdi_lit
+    ; Phase 1.3: symbol-aware dispatch (was: always value-load, so a raw
+    ; buffer arg passed content-as-pointer; locals also NASM-broke nowhere)
+    push r14
+    mov rdi, [r14 + 8]
+    call find_symbol_scoped
+    pop r14
+    cmp rax, 1
+    jne .sys_a_rdi_normal
+    mov al, [rdx + 9]
+    and al, 0x7F
+    cmp al, 3
+    jne .sys_a_rdi_normal
+    test byte [rdx + 9], 0x80
+    jz .sys_a_rdi_addr
+    push rdx
+    mov rsi, asm_lea_rdi_open
+    mov rdx, len_asm_lea_rdi_open
+    call write_to_file
+    pop rdx
+    push rdx
+    mov rsi, asm_rbp_prefix
+    mov rdx, len_asm_rbp_prefix
+    call write_to_file
+    pop rdx
+    mov eax, [rdx + 16]
+    call write_rax_to_file
+    mov rsi, asm_close_bracket_nl   ; lea closes with plain "]" (not the spill suffix)
+    mov rdx, len_asm_close_bracket_nl
+    call write_to_file
+    jmp .sys_a_rsi
+.sys_a_rdi_addr:
+    mov rsi, asm_mov_rdi_lit
+    mov rdx, len_asm_mov_rdi_lit
+    call write_to_file
+    mov rdi, [r14 + 8]
+    call get_strlen
+    mov rdx, rax
+    mov rsi, rdi
+    call write_to_file
+    mov rsi, newline
+    mov rdx, 1
+    call write_to_file
+    jmp .sys_a_rsi
+.sys_a_rdi_normal:
     mov rsi, asm_mov_rdi_l
     mov rdx, len_asm_mov_rdi_l
     call write_to_file
@@ -3288,11 +3341,67 @@ run_codegen:
     call write_to_file
 .sys_a_rsi:
     mov rax, rcx
-    add rax, 7
+    add rax, 8
     shl rax, 4
     lea r14, [token_array + rax]
     cmp byte [r14], 6
     je .sys_a_rsi_str
+    cmp byte [r14], 5
+    je .sys_a_rsi_lit
+    ; Phase 1.3: symbol-aware dispatch (was: address-immediate for every
+    ; identifier, so scalar vars passed their address and locals NASM-broke)
+    push r14
+    mov rdi, [r14 + 8]
+    call find_symbol_scoped
+    pop r14
+    cmp rax, 1
+    jne .sys_a_rsi_normal
+    mov al, [rdx + 9]
+    and al, 0x7F
+    cmp al, 3
+    jne .sys_a_rsi_normal
+    test byte [rdx + 9], 0x80
+    jz .sys_a_rsi_addr
+    push rdx
+    mov rsi, asm_lea_rsi_open
+    mov rdx, len_asm_lea_rsi_open
+    call write_to_file
+    pop rdx
+    push rdx
+    mov rsi, asm_rbp_prefix
+    mov rdx, len_asm_rbp_prefix
+    call write_to_file
+    pop rdx
+    mov eax, [rdx + 16]
+    call write_rax_to_file
+    mov rsi, asm_close_bracket_nl   ; lea closes with plain "]" (not the spill suffix)
+    mov rdx, len_asm_close_bracket_nl
+    call write_to_file
+    jmp .sys_a_rdx
+.sys_a_rsi_addr:
+    mov rsi, asm_mov_rsi_lit
+    mov rdx, len_asm_mov_rsi_lit
+    call write_to_file
+    mov rdi, [r14 + 8]
+    call get_strlen
+    mov rdx, rax
+    mov rsi, rdi
+    call write_to_file
+    mov rsi, newline
+    mov rdx, 1
+    call write_to_file
+    jmp .sys_a_rdx
+.sys_a_rsi_normal:
+    mov rsi, asm_mov_rsi_l
+    mov rdx, len_asm_mov_rsi_l
+    call write_to_file
+    mov rdi, [r14 + 8]
+    call emit_named_operand
+    mov rsi, asm_close_bracket_nl
+    mov rdx, len_asm_close_bracket_nl
+    call write_to_file
+    jmp .sys_a_rdx
+.sys_a_rsi_lit:
     mov rsi, asm_mov_rsi_lit
     mov rdx, len_asm_mov_rsi_lit
     call write_to_file
@@ -3313,18 +3422,61 @@ run_codegen:
     mov rdx, len_asm_str_prefix
     call write_to_file
     mov rax, rcx
-    add rax, 7
+    add rax, 8
     call write_rax_to_file
     mov rsi, newline
     mov rdx, 1
     call write_to_file
 .sys_a_rdx:
     mov rax, rcx
-    add rax, 9
+    add rax, 10
     shl rax, 4
     lea r14, [token_array + rax]
     cmp byte [r14], 5
     je .sys_a_rdx_lit
+    ; Phase 1.3: symbol-aware dispatch (same defect class as .sys_a_rdi)
+    push r14
+    mov rdi, [r14 + 8]
+    call find_symbol_scoped
+    pop r14
+    cmp rax, 1
+    jne .sys_a_rdx_normal
+    mov al, [rdx + 9]
+    and al, 0x7F
+    cmp al, 3
+    jne .sys_a_rdx_normal
+    test byte [rdx + 9], 0x80
+    jz .sys_a_rdx_addr
+    push rdx
+    mov rsi, asm_lea_rdx_open
+    mov rdx, len_asm_lea_rdx_open
+    call write_to_file
+    pop rdx
+    push rdx
+    mov rsi, asm_rbp_prefix
+    mov rdx, len_asm_rbp_prefix
+    call write_to_file
+    pop rdx
+    mov eax, [rdx + 16]
+    call write_rax_to_file
+    mov rsi, asm_close_bracket_nl   ; lea closes with plain "]" (not the spill suffix)
+    mov rdx, len_asm_close_bracket_nl
+    call write_to_file
+    jmp .sys_a_emit
+.sys_a_rdx_addr:
+    mov rsi, asm_mov_rdx_lit
+    mov rdx, len_asm_mov_rdx_lit
+    call write_to_file
+    mov rdi, [r14 + 8]
+    call get_strlen
+    mov rdx, rax
+    mov rsi, rdi
+    call write_to_file
+    mov rsi, newline
+    mov rdx, 1
+    call write_to_file
+    jmp .sys_a_emit
+.sys_a_rdx_normal:
     mov rsi, asm_mov_rdx_l
     mov rdx, len_asm_mov_rdx_l
     call write_to_file
@@ -3358,7 +3510,7 @@ run_codegen:
     mov rsi, asm_close_rax
     mov rdx, len_asm_close_rax
     call write_to_file
-    add rcx, 9
+    add rcx, 11                     ; consume dest..')' (12 tokens; text_skip adds 1)
     jmp .text_skip
 
 .handle_array_assign:
