@@ -46,6 +46,11 @@ section .data
     kw_state db "state", 0
     kw_trap db "trap", 0
     kw_enforce db "enforce", 0
+    ; Phase 1.5: escape/skip are bootstrap-subset loop control (StageAlpha
+    ; §2.2) but unimplemented; lexed as keywords so they reject loudly
+    ; (todo diagnostic) instead of vanishing as identifiers
+    kw_escape db "escape", 0
+    kw_skip db "skip", 0
     kw_i8 db "i8", 0
     kw_i16 db "i16", 0
     kw_i64 db "i64", 0
@@ -95,6 +100,19 @@ section .data
     len_err_syntax equ $ - msg_err_syntax
     msg_err_cond db "Syntax Error: Invalid comparison operator in condition on line ", 0
     len_err_cond equ $ - msg_err_cond
+    ; Phase 1.5: subset diagnostics (StageAlpha §2.2 / §4.3)
+    msg_err_subset db "Syntax Error: construct not in Stage-0 bootstrap subset (StageAlpha 2.2) on line ", 0
+    len_err_subset equ $ - msg_err_subset
+    msg_err_todo db "Syntax Error: bootstrap-subset construct not yet implemented in Stage 0 on line ", 0
+    len_err_todo equ $ - msg_err_todo
+    msg_err_index db "Semantic Error: array index requires a raw buffer on line ", 0
+    len_err_index equ $ - msg_err_index
+    msg_err_expr db "Syntax Error: expression unsupported here; compute into a variable first on line ", 0
+    len_err_expr equ $ - msg_err_expr
+    msg_err_shape db "Syntax Error: malformed statement shape on line ", 0
+    len_err_shape equ $ - msg_err_shape
+    msg_fatal_full db "Fatal Error: input exceeds compiler capacity (1MB source, 65536 tokens, 32768 symbols, 1MB strings)", 10, 0
+    len_fatal_full equ $ - msg_fatal_full
 
     asm_data db "section .data", 10
     len_asm_data equ $ - asm_data
@@ -300,7 +318,39 @@ section .data
     len_asm_munmap_1 equ $ - asm_munmap_1
     asm_munmap_2 db 10, "    ; mov rsi, "
     len_asm_munmap_2 equ $ - asm_munmap_2
-    
+
+    ; --- Phase 1.5a: bounds-trap emission strings (Spec1 §14.4) ---
+    asm_cmp_rax_zero db "    cmp rax, 0", 10
+    len_asm_cmp_rax_zero equ $ - asm_cmp_rax_zero
+    asm_jl_trap db "    jl .L_TRAP_"
+    len_asm_jl_trap equ $ - asm_jl_trap
+    asm_jge_trap db "    jge .L_TRAP_"
+    len_asm_jge_trap equ $ - asm_jge_trap
+    asm_jmp_trap_ok db "    jmp .L_TRAP_OK_"
+    len_asm_jmp_trap_ok equ $ - asm_jmp_trap_ok
+    asm_trap_lbl db ".L_TRAP_"
+    len_asm_trap_lbl equ $ - asm_trap_lbl
+    asm_trap_ok_lbl db ".L_TRAP_OK_"
+    len_asm_trap_ok_lbl equ $ - asm_trap_ok_lbl
+    ; $ is NASM-legal but not a Dhar identifier char: user code can never
+    ; collide with this shared trap-message label (even with dhar_ mangling)
+    asm_trap_msg_ref db "dhar$trap$msg"
+    len_asm_trap_msg_ref equ $ - asm_trap_msg_ref
+    asm_trap_msg_decl db "dhar$trap$msg db ", 96, "Dhar: index out of bounds", 96, ", 10, 0", 10
+    len_asm_trap_msg_decl equ $ - asm_trap_msg_decl
+    asm_mov_rax_one db "    mov rax, 1", 10
+    len_asm_mov_rax_one equ $ - asm_mov_rax_one
+    asm_mov_rdi_two db "    mov rdi, 2", 10
+    len_asm_mov_rdi_two equ $ - asm_mov_rdi_two
+    asm_mov_rdx_trap_len db "    mov rdx, 26", 10
+    len_asm_mov_rdx_trap_len equ $ - asm_mov_rdx_trap_len
+    asm_mov_rax_60 db "    mov rax, 60", 10
+    len_asm_mov_rax_60 equ $ - asm_mov_rax_60
+    asm_mov_rdi_one db "    mov rdi, 1", 10
+    len_asm_mov_rdi_one equ $ - asm_mov_rdi_one
+    asm_mov_rsi_trap db "    mov rsi, dhar$trap$msg", 10
+    len_asm_mov_rsi_trap equ $ - asm_mov_rsi_trap
+
     newline db 10
 
 ; --- V0.2.2: THE MEGABYTE EXPANSION & TARGET REGISTRY ---
@@ -392,6 +442,12 @@ _start:
     mov byte [last_token_type], 0
     mov qword [cur_owner], 0
 
+    ; Phase 1.5b: remove any stale output so a failed compile can never
+    ; leave a previous build/output.asm behind (unlink ignores errors)
+    mov rax, 87
+    mov rdi, out_file
+    syscall
+
     mov rax, 2              
     mov rdi, r12      
     mov rsi, 0              
@@ -406,6 +462,10 @@ _start:
     mov rsi, file_buffer    
     mov rdx, 1048576        ; Read up to 1MB of source code
     syscall
+    cmp rax, 0
+    jl .file_error                  ; Phase 1.5b: read failed (was: OOB NUL write)
+    cmp rax, 1048576
+    jae fatal_full                  ; Phase 1.5b: no room left for the NUL
     mov byte [file_buffer + rax], 0     
 
     mov rax, 3              
@@ -486,6 +546,8 @@ _start:
 
     mov rdi, word_buffer
     mov rcx, [word_len]
+    cmp rcx, 4095                  ; Phase 1.5b: cap 4095 keeps NUL in bounds
+    jae fatal_full
     add rdi, rcx
     mov [rdi], al
     inc qword [word_len]
@@ -593,6 +655,8 @@ _start:
     cmp al, '9'
     ja .um_scan_done
     mov rcx, [word_len]
+    cmp rcx, 4095                  ; Phase 1.5b: cap 4095 keeps NUL in bounds
+    jae fatal_full
     mov [rdi + rcx], al
     inc qword [word_len]
     jmp .um_digit_loop
@@ -682,6 +746,8 @@ _start:
 .bang_word_char:
     mov rdi, word_buffer
     mov rcx, [word_len]
+    cmp rcx, 4095                  ; Phase 1.5b: cap 4095 keeps NUL in bounds
+    jae fatal_full
     add rdi, rcx
     mov [rdi], al
     inc qword [word_len]
@@ -756,6 +822,8 @@ _start:
     cmp al, 34                  
     je .quote_done
     mov rcx, [word_len]
+    cmp rcx, 4095                  ; Phase 1.5b: cap 4095 keeps NUL in bounds
+    jae fatal_full
     mov [rdi + rcx], al
     inc qword [word_len]
     jmp .quote_loop
@@ -806,6 +874,19 @@ _start:
     xor rdi, rdi
     syscall
 
+; Phase 1.5b: capacity guard trip — input exceeds a fixed compiler table.
+; Writes to stderr, exits 1. (Global scope: referenced from all routines.
+; Called via jmp; stack imbalance moot on exit.)
+fatal_full:
+    mov rax, 1
+    mov rdi, 2
+    mov rsi, msg_fatal_full
+    mov rdx, len_fatal_full
+    syscall
+    mov rax, 60
+    mov rdi, 1
+    syscall
+
 run_parser:
     mov rax, 1
     mov rdi, 1
@@ -853,36 +934,209 @@ run_parser:
     je .check_give_stmt
     cmp r9b, 25                     ; gen
     je .check_gen_stmt
-    cmp r9b, 12                     ; shift
-    je .check_shift_stmt
-    cmp r9b, 13                     ; scan
-    je .check_scan_stmt
-    cmp r9b, 14                     ; cycle
-    je .check_cycle_stmt
-    cmp r9b, 15                     ; mold
-    je .check_mold_stmt
-    cmp r9b, 16                     ; forge
-    je .check_forge_stmt
-    cmp r9b, 17                     ; view
-    je .check_view_stmt
-    cmp r9b, 18                     ; grab
-    je .check_grab_stmt
-    cmp r9b, 19                     ; pull
-    je .check_pull_stmt
-    cmp r9b, 20                     ; expose
-    je .check_expose_stmt
+    cmp r9b, 12                     ; shift: subset, Phase 1.6
+    je .err_todo
+    cmp r9b, 13                     ; scan: not in subset
+    je .err_subset
+    cmp r9b, 14                     ; cycle: subset, Phase 1.6
+    je .err_todo
+    cmp r9b, 15                     ; mold: subset (layout), Phase 1.6
+    je .err_todo
+    cmp r9b, 16                     ; forge: not in subset
+    je .err_subset
+    cmp r9b, 17                     ; view: not in subset
+    je .err_subset
+    cmp r9b, 18                     ; grab: not in subset
+    je .err_subset
+    cmp r9b, 19                     ; pull: subset, Phase 1.6
+    je .err_todo
+    cmp r9b, 20                     ; expose: subset, Phase 1.6
+    je .err_todo
     cmp r9b, 21                     ; state
     je .check_state_stmt
-    cmp r9b, 22                     ; trap
-    je .check_trap_stmt
-    cmp r9b, 23                     ; enforce
-    je .check_enforce_stmt
+    cmp r9b, 22                     ; trap: not in subset
+    je .err_subset
+    cmp r9b, 23                     ; enforce: not in subset
+    je .err_subset
+    cmp r9b, 26                     ; escape: subset, Phase 1.6
+    je .err_todo
+    cmp r9b, 27                     ; skip: subset, Phase 1.6
+    je .err_todo
     jmp .next_token
 
 .check_peek_stmt:
+    ; Phase 1.5c: peek dst, buf, idx — full shape + raw-buffer validation.
+    ; rbx = peek token (line source for syntax errors); r14d set for semantics.
+    mov r14d, [rbx + 4]
+    mov rax, rcx
+    inc rax
+    cmp rax, [token_count]
+    jge .err_shape
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 2               ; dst identifier?
+    jne .err_shape
+    push r12
+    mov rdi, [r12 + 8]
+    call find_symbol_scoped
+    pop r12
+    cmp rax, 1
+    jne .err_undeclared
+    cmp byte [rdx + 8], 1           ; lock target?
+    je .err_immutable
+    cmp byte [rdx + 8], 2           ; flux scalar?
+    je .peek_dst_ok
+    cmp byte [rdx + 8], 5           ; parameter slot?
+    jne .err_shape
+.peek_dst_ok:
+    mov rax, rcx
+    add rax, 2
+    cmp rax, [token_count]
+    jge .err_shape
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 3
+    jne .err_shape
+    cmp byte [r12 + 1], 10          ; ','?
+    jne .err_shape
+    mov rax, rcx
+    add rax, 3
+    cmp rax, [token_count]
+    jge .err_shape
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 2               ; buf identifier?
+    jne .err_shape
+    push r12
+    mov rdi, [r12 + 8]
+    call find_symbol_scoped
+    pop r12
+    cmp rax, 1
+    jne .err_undeclared
+    mov al, [rdx + 9]
+    and al, 0x7F
+    cmp al, 3
+    jne .err_index
+    mov rax, rcx
+    add rax, 4
+    cmp rax, [token_count]
+    jge .err_shape
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 3
+    jne .err_shape
+    cmp byte [r12 + 1], 10
+    jne .err_shape
+    mov rax, rcx
+    add rax, 5
+    cmp rax, [token_count]
+    jge .err_shape
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 2
+    je .peek_done
+    cmp byte [r12], 5
+    jne .err_shape
+.peek_done:
     add rcx, 5
     jmp .next_token
 .check_poke_stmt:
+    ; Phase 1.5c: poke buf, idx, val — full shape + raw-buffer validation.
+    mov r14d, [rbx + 4]
+    mov rax, rcx
+    inc rax
+    cmp rax, [token_count]
+    jge .err_shape
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 2               ; buf identifier?
+    jne .err_shape
+    push r12
+    mov rdi, [r12 + 8]
+    call find_symbol_scoped
+    pop r12
+    cmp rax, 1
+    jne .err_undeclared
+    mov al, [rdx + 9]
+    and al, 0x7F
+    cmp al, 3
+    jne .err_index
+    mov rax, rcx
+    add rax, 2
+    cmp rax, [token_count]
+    jge .err_shape
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 3
+    jne .err_shape
+    cmp byte [r12 + 1], 10
+    jne .err_shape
+    mov rax, rcx
+    add rax, 3
+    cmp rax, [token_count]
+    jge .err_shape
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 2
+    je .poke_done
+    cmp byte [r12], 5
+    jne .err_shape
+.poke_done:
+    mov rax, rcx
+    add rax, 4
+    cmp rax, [token_count]
+    jge .err_shape
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 3
+    jne .err_shape
+    cmp byte [r12 + 1], 10
+    jne .err_shape
+    mov rax, rcx
+    add rax, 5
+    cmp rax, [token_count]
+    jge .err_shape
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 2
+    jne .poke_not_ident
+    ; identifier values must resolve to a plain scalar (same rule as stores)
+    push rbx
+    push rcx
+    push r12
+    push rdx
+    mov rdi, [r12 + 8]
+    call find_symbol_scoped
+    cmp rax, 1
+    jne .poke_val_undecl
+    cmp byte [rdx + 8], 3
+    je .poke_val_bad
+    cmp byte [rdx + 8], 11
+    je .poke_val_bad
+    cmp byte [rdx + 8], 12
+    je .poke_val_bad
+    pop rdx
+    pop r12
+    pop rcx
+    pop rbx
+    jmp .poke_val_ok
+.poke_val_undecl:
+    pop rdx
+    pop r12
+    pop rcx
+    pop rbx
+    jmp .err_undeclared
+.poke_val_bad:
+    pop rdx
+    pop r12
+    pop rcx
+    pop rbx
+    jmp .err_expr
+.poke_not_ident:
+    cmp byte [r12], 5
+    je .poke_val_ok
+    jmp .err_shape
+.poke_val_ok:
     add rcx, 5                      ; poke buf, idx, val -> 6 tokens total
     jmp .next_token
 
@@ -997,6 +1251,84 @@ run_parser:
     add rcx, 4
     jmp .next_token
 .check_sys_stmt:
+    ; Phase 1.5c: sys nr, a1, a2, a3 — comma shape + operand kinds.
+    ; nr/a1/a3 ∈ {ident, number}; a2 ∈ {ident, number, string}.
+    mov rax, rcx
+    inc rax
+    cmp rax, [token_count]
+    jge .err_shape
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 2
+    je .sys_nr_ok
+    cmp byte [r12], 5
+    jne .err_shape
+.sys_nr_ok:
+    mov rax, rcx
+    add rax, 2
+    cmp rax, [token_count]
+    jge .err_shape
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 3
+    jne .err_shape
+    cmp byte [r12 + 1], 10
+    jne .err_shape
+    mov rax, rcx
+    add rax, 3
+    cmp rax, [token_count]
+    jge .err_shape
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 2
+    je .sys_a1_ok
+    cmp byte [r12], 5
+    jne .err_shape
+.sys_a1_ok:
+    mov rax, rcx
+    add rax, 4
+    cmp rax, [token_count]
+    jge .err_shape
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 3
+    jne .err_shape
+    cmp byte [r12 + 1], 10
+    jne .err_shape
+    mov rax, rcx
+    add rax, 5
+    cmp rax, [token_count]
+    jge .err_shape
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 2
+    je .sys_a2_ok
+    cmp byte [r12], 5
+    je .sys_a2_ok
+    cmp byte [r12], 6
+    jne .err_shape
+.sys_a2_ok:
+    mov rax, rcx
+    add rax, 6
+    cmp rax, [token_count]
+    jge .err_shape
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 3
+    jne .err_shape
+    cmp byte [r12 + 1], 10
+    jne .err_shape
+    mov rax, rcx
+    add rax, 7
+    cmp rax, [token_count]
+    jge .err_shape
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 2
+    je .sys_done
+    cmp byte [r12], 5
+    jne .err_shape
+.sys_done:
     add rcx, 7
     jmp .next_token
 
@@ -1068,6 +1400,8 @@ run_parser:
     cmp byte [r12], 4               
     jne .err_syntax
     mov r11b, [r12 + 1]              ; base type (i32=1, str=2, raw=3)
+    cmp r11b, 15                    ; Phase 1.5c: 'state' type not in subset
+    je .err_subset
 
     ; Default: consume 3 tokens (name, colon, type)
     mov rdi, 3
@@ -1191,6 +1525,8 @@ run_parser:
     jne .err_var_type
     
     mov r9b, [r12 + 1]              
+    cmp r9b, 15                     ; Phase 1.5c: 'state' type not in subset
+    je .err_subset
     mov r14d, [rbx + 4]             
     mov r15w, [rbx + 2]             
     
@@ -1264,7 +1600,41 @@ run_parser:
     jmp .err_assign_val
     
 .valid_inline_rhs:
-    add rdi, 2                      
+    add rdi, 2
+    ; Phase 1.5c: the value must end the statement — a trailing operator
+    ; would silently drop (codegen stores one value only). r10 holds the
+    ; array-size pointer for add_symbol below; use r8d here, not r10d.
+    mov rax, rcx
+    add rax, rdi
+    inc rax
+    cmp rax, [token_count]
+    jge .finish_var_decl
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 3
+    jne .finish_var_decl
+    mov al, [r12 + 1]
+    cmp al, 6
+    je .va_decl_expr
+    cmp al, 7
+    je .va_decl_expr
+    cmp al, 16
+    je .va_decl_expr
+    cmp al, 17
+    je .va_decl_expr
+    cmp al, 18
+    je .va_decl_expr
+    cmp al, 2                       ; '(' : call-as-value unsupported here
+    jne .finish_var_decl
+.va_decl_expr:
+    mov r8d, [r12 + 4]              ; operator line
+    mov rax, rcx
+    add rax, rdi
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp r8d, [r12 + 4]              ; same line as the value?
+    jne .finish_var_decl
+    jmp .err_expr
 
 .finish_var_decl:
     call check_symbol_collision_scoped
@@ -1362,6 +1732,152 @@ run_parser:
     cmp r11b, 1                     
     je .err_immutable
 
+    ; Phase 1.5c: array-store validation (bounds-trap soundness + shape).
+    ; Layout from dest ident: +1 '[' (3,8), +2 index, +3 ']' (3,9),
+    ; +4 '=' (3,4), +5 value. Anything else is the scalar '=' path.
+    mov rax, rcx
+    inc rax
+    cmp rax, [token_count]
+    jge .va_scalar_path
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 3
+    jne .va_scalar_path
+    cmp byte [r12 + 1], 8
+    jne .va_scalar_path
+    ; array form: dest must be a raw buffer (rdx = dest symbol, r14d = line)
+    mov al, [rdx + 9]
+    and al, 0x7F
+    cmp al, 3
+    jne .err_index
+    ; index token +2 must be an identifier or number
+    mov rax, rcx
+    add rax, 2
+    cmp rax, [token_count]
+    jge .err_shape
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 2
+    je .va_idx_ok
+    cmp byte [r12], 5
+    jne .err_shape
+.va_idx_ok:
+    ; +3 must be ']', +4 must be '='
+    mov rax, rcx
+    add rax, 3
+    cmp rax, [token_count]
+    jge .err_shape
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 3
+    jne .err_shape
+    cmp byte [r12 + 1], 9
+    jne .err_shape
+    mov rax, rcx
+    add rax, 4
+    cmp rax, [token_count]
+    jge .err_shape
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 3
+    jne .err_shape
+    cmp byte [r12 + 1], 4
+    jne .err_shape
+    ; +5 value must be an identifier, number, or one-byte string
+    mov rax, rcx
+    add rax, 5
+    cmp rax, [token_count]
+    jge .err_shape
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 2
+    jne .va_not_ident
+    ; identifier values must resolve to a plain scalar (not a task, which
+    ; would read the code address, nor an array, which has no scalar value)
+    push rbx
+    push rcx
+    push r12
+    push rdx
+    mov rdi, [r12 + 8]
+    call find_symbol_scoped         ; cur_owner live during parse
+    cmp rax, 1
+    jne .va_val_undecl
+    cmp byte [rdx + 8], 3           ; task callee
+    je .va_val_bad
+    cmp byte [rdx + 8], 11          ; lock array
+    je .va_val_bad
+    cmp byte [rdx + 8], 12          ; flux array
+    je .va_val_bad
+    pop rdx
+    pop r12
+    pop rcx
+    pop rbx
+    jmp .va_val_ok
+.va_val_undecl:
+    pop rdx
+    pop r12
+    pop rcx
+    pop rbx
+    jmp .err_undeclared
+.va_val_bad:
+    pop rdx
+    pop r12
+    pop rcx
+    pop rbx
+    jmp .err_expr
+.va_not_ident:
+    cmp byte [r12], 5
+    je .va_val_ok
+    cmp byte [r12], 6
+    jne .err_shape
+    push rbx
+    push rcx
+    push r12
+    mov rdi, [r12 + 8]
+    call get_strlen
+    cmp rax, 1
+    pop r12
+    pop rcx
+    pop rbx
+    jne .err_shape
+.va_val_ok:
+    ; +6 must not extend the value with an arithmetic expression on the
+    ; same line (codegen stores one value; the rest would silently drop)
+    mov rax, rcx
+    add rax, 6
+    cmp rax, [token_count]
+    jge .va_array_done
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 3
+    jne .va_array_done
+    mov al, [r12 + 1]
+    cmp al, 6
+    je .va_expr_check
+    cmp al, 7
+    je .va_expr_check
+    cmp al, 16
+    je .va_expr_check
+    cmp al, 17
+    je .va_expr_check
+    cmp al, 18
+    je .va_expr_check
+    cmp al, 2                       ; '(' : call-as-value unsupported here
+    je .va_expr_check
+    jne .va_array_done
+.va_expr_check:
+    mov r10d, [r12 + 4]             ; operator line
+    mov rax, rcx
+    add rax, 5
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp r10d, [r12 + 4]             ; same line as the value?
+    jne .va_array_done
+    jmp .err_expr
+.va_array_done:
+    add rcx, 5                      ; consume dest..value
+    jmp .next_token
+.va_scalar_path:
     mov rax, rcx
     add rax, 2
     cmp rax, [token_count]
@@ -1377,9 +1893,107 @@ run_parser:
     jmp .next_token
 
 .check_sys_assign_parser:
-    cmp byte [r12 + 1], 6           
+    cmp byte [r12 + 1], 6
     jne .normal_assign_skip
-    add rcx, 9                      
+    ; Phase 1.5c: dest = sys(nr, a1, a2, a3) — paren/comma shape + kinds.
+    ; rbx = dest token (line source). Park rcx on ')' when valid.
+    mov rax, rcx
+    add rax, 3
+    cmp rax, [token_count]
+    jge .err_shape
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 3
+    jne .err_shape
+    cmp byte [r12 + 1], 2           ; '('?
+    jne .err_shape
+    mov rax, rcx
+    add rax, 4
+    cmp rax, [token_count]
+    jge .err_shape
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 2
+    je .sa_nr_ok
+    cmp byte [r12], 5
+    jne .err_shape
+.sa_nr_ok:
+    mov rax, rcx
+    add rax, 5
+    cmp rax, [token_count]
+    jge .err_shape
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 3
+    jne .err_shape
+    cmp byte [r12 + 1], 10
+    jne .err_shape
+    mov rax, rcx
+    add rax, 6
+    cmp rax, [token_count]
+    jge .err_shape
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 2
+    je .sa_a1_ok
+    cmp byte [r12], 5
+    jne .err_shape
+.sa_a1_ok:
+    mov rax, rcx
+    add rax, 7
+    cmp rax, [token_count]
+    jge .err_shape
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 3
+    jne .err_shape
+    cmp byte [r12 + 1], 10
+    jne .err_shape
+    mov rax, rcx
+    add rax, 8
+    cmp rax, [token_count]
+    jge .err_shape
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 2
+    je .sa_a2_ok
+    cmp byte [r12], 5
+    je .sa_a2_ok
+    cmp byte [r12], 6
+    jne .err_shape
+.sa_a2_ok:
+    mov rax, rcx
+    add rax, 9
+    cmp rax, [token_count]
+    jge .err_shape
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 3
+    jne .err_shape
+    cmp byte [r12 + 1], 10
+    jne .err_shape
+    mov rax, rcx
+    add rax, 10
+    cmp rax, [token_count]
+    jge .err_shape
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 2
+    je .sa_a3_ok
+    cmp byte [r12], 5
+    jne .err_shape
+.sa_a3_ok:
+    mov rax, rcx
+    add rax, 11
+    cmp rax, [token_count]
+    jge .err_shape
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 3
+    jne .err_shape
+    cmp byte [r12 + 1], 3           ; ')'?
+    jne .err_shape
+    add rcx, 11
     jmp .next_token
 
 .next_token:
@@ -1389,6 +2003,22 @@ run_parser:
 .err_syntax:
     mov rsi, msg_err_syntax
     mov rdx, len_err_syntax
+    jmp .print_syntax_err
+.err_subset:
+    mov rsi, msg_err_subset
+    mov rdx, len_err_subset
+    jmp .print_syntax_err
+.err_todo:
+    mov rsi, msg_err_todo
+    mov rdx, len_err_todo
+    jmp .print_syntax_err
+.err_expr:
+    mov rsi, msg_err_expr
+    mov rdx, len_err_expr
+    jmp .print_syntax_err
+.err_shape:
+    mov rsi, msg_err_shape
+    mov rdx, len_err_shape
     jmp .print_syntax_err
 .err_bad_condition:
     mov rsi, msg_err_cond
@@ -1415,11 +2045,11 @@ run_parser:
     mov rdx, len_err_assign_val
 .print_syntax_err:
     mov rax, 1
-    mov rdi, 1
+    mov rdi, 2                      ; Phase 1.5b: diagnostics to stderr
     syscall
     xor rax, rax
     mov eax, dword [rbx + 4]        
-    call print_num
+    call print_num_stderr
     mov rax, 60
     mov rdi, 1
     syscall
@@ -1434,13 +2064,18 @@ run_parser:
 .err_immutable:
     mov rsi, msg_err_immut
     mov rdx, len_err_immut
+    jmp .print_sem_err
+.err_index:
+    mov rsi, msg_err_index
+    mov rdx, len_err_index
+    jmp .print_sem_err
 .print_sem_err:
     mov rax, 1
-    mov rdi, 1
+    mov rdi, 2                      ; Phase 1.5b: diagnostics to stderr
     syscall
     xor rax, rax
     mov eax, r14d        
-    call print_num
+    call print_num_stderr
     mov rax, 60
     mov rdi, 1
     syscall
@@ -1695,6 +2330,11 @@ run_codegen:
     jmp .data_loop
 .data_done:
 
+    ; Phase 1.5a: shared bounds-trap message (referenced by every trap site)
+    mov rsi, asm_trap_msg_decl
+    mov rdx, len_asm_trap_msg_decl
+    call write_to_file
+
     mov rsi, asm_bss
     mov rdx, len_asm_bss
     call write_to_file
@@ -1906,6 +2546,9 @@ run_codegen:
     inc rax
     shl rax, 4
     lea r12, [token_array + rax]
+    ; Phase 1.5a: bounds-check the index in rax against buf raw[N]
+    mov rdi, [r12 + 8]
+    call emit_bounds_trap
     mov rdi, [r12 + 8]
     mov r13, rdi
     call find_symbol_scoped
@@ -2010,6 +2653,10 @@ run_codegen:
     add rax, 3
     shl rax, 4
     lea r12, [token_array + rax] 
+
+    ; Phase 1.5a: bounds-check the index in rax against buf raw[N]
+    mov rdi, [r12 + 8]
+    call emit_bounds_trap
 
     ; V0.3.0: local buffers are frame-resident -> lea rsi, [rbp-N]
     mov rdi, [r12 + 8]
@@ -2317,6 +2964,8 @@ run_codegen:
     pop rcx
 
     mov r14, [cf_sp]
+    cmp r14, 2048                   ; Phase 1.5b: cf_stack holds 2048 frames
+    jae fatal_full
     shl r14, 5
     lea r11, [cf_stack + r14]
     mov qword [r11], 0
@@ -2365,6 +3014,8 @@ run_codegen:
     inc qword [label_id_counter]
     
     mov r14, [cf_sp]
+    cmp r14, 2048                   ; Phase 1.5b: cf_stack holds 2048 frames
+    jae fatal_full
     shl r14, 5
     lea r11, [cf_stack + r14]
     mov [r11], rdi                  
@@ -3614,6 +4265,10 @@ run_codegen:
     mov rdx, 1
     call write_to_file
 .arr_store:
+    ; Phase 1.5a: bounds-check the index in rax against dest raw[N]
+    ; (dest validated as raw by the parser; rbx = dest token)
+    mov rdi, [rbx + 8]
+    call emit_bounds_trap
     mov rsi, asm_mov1_byte
     mov rdx, len_asm_mov1_byte
     call write_to_file
@@ -3964,7 +4619,22 @@ pf_mark_local:
     cmp dword [rdx + 16], 0
     jne .pml_exit
     or byte [rdx + 9], 0x80         ; local flag = subtype bit7
-    inc qword [scan_frame_off]
+    ; Phase 1.5a: raw[N] locals reserve ceil(N/8) slots so in-range indices
+    ; land inside the frame (scalars and params keep one 8-byte slot)
+    mov rax, 1                      ; default one slot
+    cmp byte [rdx + 8], 5           ; parameters keep one slot (raw-param ABI TBD)
+    je .pml_have_slots
+    mov rdi, [rdx + 24]             ; array size text (0 for scalars)
+    test rdi, rdi
+    jz .pml_have_slots
+    call parse_uint                 ; rax = N (preserves rdi/rdx)
+    add rax, 7
+    shr rax, 3                      ; slots = ceil(N/8)
+    test rax, rax
+    jnz .pml_have_slots
+    mov rax, 1                      ; degenerate raw[0]: one slot floor
+.pml_have_slots:
+    add [scan_frame_off], rax
     mov rax, [scan_frame_off]
     shl rax, 3                      ; bytes used so far
     mov [rdx + 16], eax             ; positive distance below rbp (32-bit)
@@ -4003,6 +4673,127 @@ emit_mangled_name:
     pop rsi
     call write_to_file
     pop rax
+    ret
+
+; ------------------------------------------------------------------------------
+; Phase 1.5a emit_bounds_trap (Spec1 §14.4):
+;   rdi = raw buffer name ptr. The index must already be in rax in the EMITTED
+;   code. Emits: cmp rax,0; jl FAIL; cmp rax,N; jge FAIL; jmp OK;
+;   FAIL: write message to stderr, exit(1); OK:
+;   N comes from the symbol's array size (+24 text), or defaults to 8 for a
+;   bare raw declaration. Preserves rbx, rcx, r8-r15; uses rax/rdi/rsi/rdx.
+; ------------------------------------------------------------------------------
+emit_bounds_trap:
+    push rbx
+    push rcx
+    push r8
+    push r9
+    push r10
+    push r11
+    push r12
+    push r13
+    push r14
+    push r15
+    call find_symbol_scoped         ; rdi = name; rax?/rdx = sym
+    mov r14, 8                      ; default N = 8 (bare raw / unknown)
+    cmp rax, 1
+    jne .ebt_have_n
+    mov rsi, [rdx + 24]
+    test rsi, rsi
+    jz .ebt_have_n
+    push rdx
+    mov rdi, rsi
+    call parse_uint                 ; rax = N
+    mov r14, rax
+    pop rdx
+.ebt_have_n:
+    mov r13, [label_id_counter]
+    inc qword [label_id_counter]
+    mov rsi, asm_cmp_rax_zero
+    mov rdx, len_asm_cmp_rax_zero
+    call write_to_file
+    mov rsi, asm_jl_trap
+    mov rdx, len_asm_jl_trap
+    call write_to_file
+    mov rax, r13
+    call write_rax_to_file
+    mov rsi, newline
+    mov rdx, 1
+    call write_to_file
+    mov rsi, asm_cmp_rax
+    mov rdx, len_asm_cmp_rax
+    call write_to_file
+    mov rax, r14
+    call write_rax_to_file
+    mov rsi, newline
+    mov rdx, 1
+    call write_to_file
+    mov rsi, asm_jge_trap
+    mov rdx, len_asm_jge_trap
+    call write_to_file
+    mov rax, r13
+    call write_rax_to_file
+    mov rsi, newline
+    mov rdx, 1
+    call write_to_file
+    mov rsi, asm_jmp_trap_ok
+    mov rdx, len_asm_jmp_trap_ok
+    call write_to_file
+    mov rax, r13
+    call write_rax_to_file
+    mov rsi, newline
+    mov rdx, 1
+    call write_to_file
+    mov rsi, asm_trap_lbl
+    mov rdx, len_asm_trap_lbl
+    call write_to_file
+    mov rax, r13
+    call write_rax_to_file
+    mov rsi, asm_colon_nl
+    mov rdx, len_asm_colon_nl
+    call write_to_file
+    mov rsi, asm_mov_rax_one
+    mov rdx, len_asm_mov_rax_one
+    call write_to_file
+    mov rsi, asm_mov_rdi_two
+    mov rdx, len_asm_mov_rdi_two
+    call write_to_file
+    mov rsi, asm_mov_rsi_trap
+    mov rdx, len_asm_mov_rsi_trap
+    call write_to_file
+    mov rsi, asm_mov_rdx_trap_len
+    mov rdx, len_asm_mov_rdx_trap_len
+    call write_to_file
+    mov rsi, asm_syscall
+    mov rdx, len_asm_syscall
+    call write_to_file
+    mov rsi, asm_mov_rax_60
+    mov rdx, len_asm_mov_rax_60
+    call write_to_file
+    mov rsi, asm_mov_rdi_one
+    mov rdx, len_asm_mov_rdi_one
+    call write_to_file
+    mov rsi, asm_syscall
+    mov rdx, len_asm_syscall
+    call write_to_file
+    mov rsi, asm_trap_ok_lbl
+    mov rdx, len_asm_trap_ok_lbl
+    call write_to_file
+    mov rax, r13
+    call write_rax_to_file
+    mov rsi, asm_colon_nl
+    mov rdx, len_asm_colon_nl
+    call write_to_file
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rcx
+    pop rbx
     ret
 
 ; ------------------------------------------------------------------------------
@@ -4200,6 +4991,32 @@ write_rax_to_file:
     pop rax
     ret
 
+; ------------------------------------------------------------------------------
+; Phase 1.5a parse_uint:
+;   rdi = NUL-terminated ASCII digits (array size text). Returns rax = value.
+;   Stops at first non-digit. Preserves rdi/rdx/rbx/rcx/rsi; clobbers rax.
+; ------------------------------------------------------------------------------
+parse_uint:
+    push rdi
+    push rdx
+    xor rax, rax
+.pu_loop:
+    movzx edx, byte [rdi]
+    cmp dl, 0
+    je .pu_done
+    sub dl, '0'
+    cmp dl, 9
+    ja .pu_done
+    imul rax, rax, 10
+    movzx edx, dl
+    add rax, rdx
+    inc rdi
+    jmp .pu_loop
+.pu_done:
+    pop rdx
+    pop rdi
+    ret
+
 emit_start_label:
     push rdi
     push rax
@@ -4376,6 +5193,8 @@ add_symbol:
     push rdx
     push r10
     mov rax, [symbol_count]
+    cmp rax, 32768                  ; Phase 1.5b: symbol_table holds 32768
+    jae fatal_full
     shl rax, 5                      
     lea rbx, [symbol_table + rax]
     mov [rbx], r13                  
@@ -4573,6 +5392,16 @@ process_current_word:
     call string_compare
     cmp rax, 1
     je .found_enforce
+    mov rdi, word_buffer
+    mov rdx, kw_escape
+    call string_compare
+    cmp rax, 1
+    je .found_escape
+    mov rdi, word_buffer
+    mov rdx, kw_skip
+    call string_compare
+    cmp rax, 1
+    je .found_skip
     mov rdi, word_buffer
     mov rdx, kw_i8
     call string_compare
@@ -4806,6 +5635,18 @@ process_current_word:
     xor r10, r10
     call store_token
     jmp .reset_buffer
+.found_escape:
+    mov r8b, 1
+    mov r9b, 26
+    xor r10, r10
+    call store_token
+    jmp .reset_buffer
+.found_skip:
+    mov r8b, 1
+    mov r9b, 27
+    xor r10, r10
+    call store_token
+    jmp .reset_buffer
 .found_i8:
     mov r8b, 4
     mov r9b, 4
@@ -4922,6 +5763,8 @@ store_token:
     push rbx
     push rcx
     mov rax, [token_count]
+    cmp rax, 65536                  ; Phase 1.5b: token_array holds 65536
+    jae fatal_full
     shl rax, 4                      
     lea rbx, [token_array + rax]    
     mov [rbx], r8b
@@ -4943,6 +5786,11 @@ save_string:
     push rdi
     push rcx
     push rbx
+    mov rax, [pool_offset]          ; Phase 1.5b: string_pool holds 1MB
+    add rax, [word_len]
+    inc rax                         ; trailing NUL
+    cmp rax, 1048576
+    ja fatal_full
     mov rsi, word_buffer
     mov rbx, [pool_offset]
     lea rdi, [string_pool + rbx]
@@ -5018,6 +5866,38 @@ print_num:
     jne .convert_loop
     mov rax, 1
     mov rdi, 1
+    mov rsi, rsp
+    mov rdx, rbx
+    sub rdx, rsp
+    syscall
+    mov rsp, rbx
+    pop rsi
+    pop rdi
+    pop rdx
+    pop rcx
+    pop rbx
+    ret
+; Phase 1.5b: print_num to stderr (error paths keep stdout clean)
+print_num_stderr:
+    push rbx
+    push rcx
+    push rdx
+    push rdi
+    push rsi
+    mov rcx, 10
+    mov rbx, rsp
+    dec rsp
+    mov byte [rsp], 10
+.convert_loop2:
+    xor rdx, rdx
+    div rcx
+    add dl, '0'
+    dec rsp
+    mov [rsp], dl
+    cmp rax, 0
+    jne .convert_loop2
+    mov rax, 1
+    mov rdi, 2
     mov rsi, rsp
     mov rdx, rbx
     sub rdx, rsp
