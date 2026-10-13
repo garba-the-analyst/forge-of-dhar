@@ -100,6 +100,12 @@ section .data
     len_asm_data equ $ - asm_data
     asm_str_prefix db "str_"
     len_asm_str_prefix equ $ - asm_str_prefix
+    ; --- Phase 1.4 (P12): global identifiers emit as dhar_<name> so user
+    ;     names can never collide with NASM mnemonics, registers, _start,
+    ;     generated str_N labels, or control labels (.L_*). Locals already
+    ;     emit as rbp-N and are unaffected.
+    asm_dhar_prefix db "dhar_"
+    len_asm_dhar_prefix equ $ - asm_dhar_prefix
     asm_db_quote db " db ", 96
     len_asm_db_quote equ $ - asm_db_quote
     asm_quote_zero db 96, ", 0", 10
@@ -110,7 +116,7 @@ section .data
     len_asm_resq equ $ - asm_resq
     asm_resq_base db " resq "
     len_asm_resq_base equ $ - asm_resq_base
-    asm_text db 10, "section .text", 10, "    global _start", 10, "_start:", 10, "    call core", 10, "    mov rax, 60", 10, "    xor rdi, rdi", 10, "    syscall", 10, 10
+    asm_text db 10, "section .text", 10, "    global _start", 10, "_start:", 10, "    call dhar_core", 10, "    mov rax, 60", 10, "    xor rdi, rdi", 10, "    syscall", 10, 10
     len_asm_text equ $ - asm_text
     
     asm_call db "    call "
@@ -1549,11 +1555,8 @@ emit_call_sequence:
     mov rdx, len_asm_call
     call write_to_file
     mov r13, [ecs_callee_tok]
-    mov rdi, [r13 + 8]
-    call get_strlen
-    mov rdx, rax
-    mov rsi, rdi
-    call write_to_file
+    mov rdi, [r13 + 8]              ; Phase 1.4: call dhar_<name>
+    call emit_mangled_name
     mov rsi, newline
     mov rdx, 1
     call write_to_file
@@ -1715,11 +1718,8 @@ run_codegen:
     cmp dword [rbx + 16], 0         ; V0.4.1: stack offset=0 -> global, !=0 -> local
     jne .bss_skip
 
-    mov rdi, [rbx]          
-    call get_strlen
-    mov rdx, rax            
-    mov rsi, rdi            
-    call write_to_file
+    mov rdi, [rbx]                      ; Phase 1.4: dhar_ prefix (NASM-safe)
+    call emit_mangled_name
 
     cmp qword [rbx + 24], 0
     jne .bss_emit_array
@@ -2193,11 +2193,8 @@ run_codegen:
     mov rsi, newline
     mov rdx, 1
     call write_to_file
-    mov rdi, [r12 + 8]
-    call get_strlen
-    mov rdx, rax
-    mov rsi, rdi
-    call write_to_file
+    mov rdi, [r12 + 8]                  ; Phase 1.4: task label dhar_<name>
+    call emit_mangled_name
     mov rsi, asm_colon_nl
     mov rdx, len_asm_colon_nl
     call write_to_file
@@ -2549,7 +2546,7 @@ run_codegen:
     cmp al, 3                       ; unmasked check passed locals to the
     jne .sys_rdi_normal             ; value path (content as pointer -> silence)
     test byte [rdx + 9], 0x80          
-    jz .sys_rdi_lit
+    jz .sys_rdi_addr
     push rdx
     mov rsi, asm_lea_rdi_open
     mov rdx, len_asm_lea_rdi_open
@@ -2588,6 +2585,16 @@ run_codegen:
     mov rsi, newline
     mov rdx, 1
     call write_to_file
+    jmp .sys_rsi
+.sys_rdi_addr:                      ; Phase 1.4: global raw address, mangled
+    mov rsi, asm_mov_rdi_lit
+    mov rdx, len_asm_mov_rdi_lit
+    call write_to_file
+    mov rdi, [r13 + 8]
+    call emit_mangled_name
+    mov rsi, newline
+    mov rdx, 1
+    call write_to_file
 
 .sys_rsi:
     mov rax, rcx
@@ -2612,7 +2619,7 @@ run_codegen:
     cmp al, 3
     jne .sys_rsi_normal
     test byte [rdx + 9], 0x80          
-    jz .sys_rsi_lit
+    jz .sys_rsi_addr
     push rdx
     mov rsi, asm_lea_rsi_open
     mov rdx, len_asm_lea_rsi_open
@@ -2653,6 +2660,16 @@ run_codegen:
     mov rdx, 1
     call write_to_file
     jmp .sys_rdx
+.sys_rsi_addr:                      ; Phase 1.4: global raw address, mangled
+    mov rsi, asm_mov_rsi_lit
+    mov rdx, len_asm_mov_rsi_lit
+    call write_to_file
+    mov rdi, [r13 + 8]
+    call emit_mangled_name
+    mov rsi, newline
+    mov rdx, 1
+    call write_to_file
+    jmp .sys_rdx
 
 .sys_rsi_str:
     mov rsi, asm_mov_rsi_lit
@@ -2689,7 +2706,7 @@ run_codegen:
     cmp al, 3
     jne .sys_rdx_normal
     test byte [rdx + 9], 0x80          
-    jz .sys_rdx_lit
+    jz .sys_rdx_addr
     push rdx
     mov rsi, asm_lea_rdx_open
     mov rdx, len_asm_lea_rdx_open
@@ -2728,6 +2745,17 @@ run_codegen:
     mov rsi, newline
     mov rdx, 1
     call write_to_file
+    jmp .sys_emit
+.sys_rdx_addr:                      ; Phase 1.4: global raw address, mangled
+    mov rsi, asm_mov_rdx_lit
+    mov rdx, len_asm_mov_rdx_lit
+    call write_to_file
+    mov rdi, [r13 + 8]
+    call emit_mangled_name
+    mov rsi, newline
+    mov rdx, 1
+    call write_to_file
+    jmp .sys_emit
 
 .sys_emit:
     mov rsi, asm_syscall
@@ -3308,11 +3336,8 @@ run_codegen:
     mov rsi, asm_mov_rdi_lit
     mov rdx, len_asm_mov_rdi_lit
     call write_to_file
-    mov rdi, [r14 + 8]
-    call get_strlen
-    mov rdx, rax
-    mov rsi, rdi
-    call write_to_file
+    mov rdi, [r14 + 8]              ; Phase 1.4: mangled address
+    call emit_mangled_name
     mov rsi, newline
     mov rdx, 1
     call write_to_file
@@ -3382,11 +3407,8 @@ run_codegen:
     mov rsi, asm_mov_rsi_lit
     mov rdx, len_asm_mov_rsi_lit
     call write_to_file
-    mov rdi, [r14 + 8]
-    call get_strlen
-    mov rdx, rax
-    mov rsi, rdi
-    call write_to_file
+    mov rdi, [r14 + 8]              ; Phase 1.4: mangled address
+    call emit_mangled_name
     mov rsi, newline
     mov rdx, 1
     call write_to_file
@@ -3467,11 +3489,8 @@ run_codegen:
     mov rsi, asm_mov_rdx_lit
     mov rdx, len_asm_mov_rdx_lit
     call write_to_file
-    mov rdi, [r14 + 8]
-    call get_strlen
-    mov rdx, rax
-    mov rsi, rdi
-    call write_to_file
+    mov rdi, [r14 + 8]              ; Phase 1.4: mangled address
+    call emit_mangled_name
     mov rsi, newline
     mov rdx, 1
     call write_to_file
@@ -3963,8 +3982,32 @@ pf_mark_local:
     ret
 
 ; ------------------------------------------------------------------------------
+; Phase 1.4 emit_mangled_name:
+;   rdi = identifier string. Writes dhar_<name>. Preserves rax/rdi/rsi/rdx
+;   and touches nothing else (safe anywhere a plain name was written).
+; ------------------------------------------------------------------------------
+emit_mangled_name:
+    push rax
+    push rdi
+    push rsi
+    push rdx
+    mov rsi, asm_dhar_prefix
+    mov rdx, len_asm_dhar_prefix
+    call write_to_file
+    pop rdx
+    pop rsi
+    pop rdi
+    push rdi
+    call get_strlen
+    mov rdx, rax
+    pop rsi
+    call write_to_file
+    pop rax
+    ret
+
+; ------------------------------------------------------------------------------
 ; V0.3.0 emit_named_operand:
-;   rdi = identifier string. Writes the plain label text for globals, or
+;   rdi = identifier string. Writes the mangled label text for globals, or
 ;   "rbp-<offset>" for task-local symbols. Preserves all caller registers.
 ; ------------------------------------------------------------------------------
 emit_named_operand:
@@ -3990,11 +4033,8 @@ emit_named_operand:
     call write_rax_to_file
     jmp .eno_exit
 .eno_plain:
-    mov rdi, r8
-    call get_strlen
-    mov rdx, rax
-    mov rsi, rdi
-    call write_to_file
+    mov rdi, r8                     ; Phase 1.4: dhar_ prefix (NASM-safe)
+    call emit_mangled_name
 .eno_exit:
     pop r13
     pop r8
