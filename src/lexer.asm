@@ -200,6 +200,13 @@ section .data
     len_asm_mov_rcx_l equ $ - asm_mov_rcx_l
     asm_array_store_2 db " + rax*8], rcx", 10
     len_asm_array_store_2 equ $ - asm_array_store_2
+    ; --- Phase 1.2 (P2/P11): raw[N] is N bytes (Spec1 §14.4) with byte-wide
+    ;     peek/poke primitives, so buf[i]=v stores ONE byte at buf+i.
+    ;     (The qword/stride-8 form above is retired; kept for reference.)
+    asm_mov1_byte db "    mov byte ["
+    len_asm_mov1_byte equ $ - asm_mov1_byte
+    asm_array_store_byte db " + rax], cl", 10
+    len_asm_array_store_byte equ $ - asm_array_store_byte
     asm_mov_rdi_l db "    mov rdi, qword ["
     len_asm_mov_rdi_l equ $ - asm_mov_rdi_l
     asm_mov_rdi_lit db "    mov rdi, "
@@ -2114,7 +2121,11 @@ run_codegen:
     add rax, 2
     shl rax, 4
     lea r13, [token_array + rax]    
-    
+ 
+    cmp byte [r13], 2               ; Phase 1.2b: identifier initializer
+    je .cg_inline_ident             ; (flux x: i32 = y) needs load-then-store;
+                                    ; the literal path below would emit the bare
+                                    ; name as an immediate (wrong value / NASM error)
     mov rsi, asm_mov1
     mov rdx, len_asm_mov1
     call write_to_file
@@ -2143,6 +2154,27 @@ run_codegen:
 .cg_inline_end:
     mov rsi, newline
     mov rdx, 1
+    call write_to_file
+    mov rax, r14
+    add rax, 2
+    add rcx, rax
+    jmp .text_skip
+.cg_inline_ident:
+    mov rsi, asm_mov_rax_l
+    mov rdx, len_asm_mov_rax_l
+    call write_to_file
+    mov rdi, [r13 + 8]
+    call emit_named_operand
+    mov rsi, asm_close_bracket_nl
+    mov rdx, len_asm_close_bracket_nl
+    call write_to_file
+    mov rsi, asm_mov_dest_rax
+    mov rdx, len_asm_mov_dest_rax
+    call write_to_file
+    mov rdi, [r8 + 8]
+    call emit_named_operand
+    mov rsi, asm_close_rax
+    mov rdx, len_asm_close_rax
     call write_to_file
     mov rax, r14
     add rax, 2
@@ -3411,13 +3443,13 @@ run_codegen:
     mov rdx, 1
     call write_to_file
 .arr_store:
-    mov rsi, asm_mov1
-    mov rdx, len_asm_mov1
+    mov rsi, asm_mov1_byte
+    mov rdx, len_asm_mov1_byte
     call write_to_file
     mov rdi, [rbx + 8]
     call emit_named_operand
-    mov rsi, asm_array_store_2
-    mov rdx, len_asm_array_store_2
+    mov rsi, asm_array_store_byte
+    mov rdx, len_asm_array_store_byte
     call write_to_file
     add rcx, 5
     jmp .text_skip
