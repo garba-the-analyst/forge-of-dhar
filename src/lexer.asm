@@ -1774,6 +1774,10 @@ run_codegen:
     jne .normal_close
     cmp r13, 1                      
     jne .normal_close
+    cmp dx, [r12 + 8]               ; Phase 1.1 (P7): fallback binds only to the frame
+    jne .normal_close               ; at its own indent; an outer fallback must not
+                                    ; be consumed by an inner when (which dropped the
+                                    ; outer jmp .L_END_ and fell into both branches)
     call emit_jmp_end               
     call emit_fallback_label        
     mov qword [r12 + 16], 3         
@@ -3050,13 +3054,17 @@ run_codegen:
     cmp rax, 1
     jne .no_incdec_fold
     cmp byte [r8 + 1], 6            ; '+' -> inc
-    jne .fold_dec_sel
-    mov rsi, asm_inc
-    mov rdx, len_asm_inc
-    jmp .do_fold_write
+    je .fold_inc_sel
+    cmp byte [r8 + 1], 7            ; '-' -> dec; Phase 1.1b: '*','/','%'
+    jne .no_incdec_fold             ; must NOT fold (v3=v3*1 wrongly emitted dec)
 .fold_dec_sel:
     mov rsi, asm_dec
     mov rdx, len_asm_dec
+    jmp .do_fold_write
+.fold_inc_sel:
+    mov rsi, asm_inc
+    mov rdx, len_asm_inc
+    jmp .do_fold_write
 .do_fold_write:
     call write_to_file
     mov rdi, [rbx + 8]
