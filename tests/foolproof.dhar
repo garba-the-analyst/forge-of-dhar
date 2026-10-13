@@ -9,18 +9,18 @@ task test_memory():
     sys 1, 1, mem_msg, 50
 
 task test_logic():
-    flux state: i32 = 1
+    flux st_val: i32 = 1
     flux out_msg: str
     
-    when state == 1:
+    when st_val == 1:
         out_msg = "[OK] Control flow (when) passed.\n"
-        state = state + 1
+        st_val = st_val + 1
     fallback:
         out_msg = "[FAIL] Control flow (fallback) broke.\n"
         
     sys 1, 1, out_msg, 33
 
-    when state == 2:
+    when st_val == 2:
         flux loop_count: i32 = 0
         span loop_count == 0:
             lock loop_msg: str = "[OK] Loop (span) and Math passed.\n"
