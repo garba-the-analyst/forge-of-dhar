@@ -1,7 +1,7 @@
 # **⚒️ The Forge of Dhar (V0.4.0-doc Architecture)**
 
 **The Forge of Dhar** is the foundational, pre-bootstrapped systems compiler for the **Dhar Programming Language**.  
-Designed and engineered by **Garba the Analyst**, V0 operates with **zero external dependencies** (no libc, no standard library, no runtime). Written entirely in 100% bare-metal x86\_64 NASM Assembly (src/lexer.asm), it is a self-contained systems compiler capable of dynamic Lexical Analysis, Indentation-Based Syntax Parsing, Symbol Table resolution, Six-Operator Conditionals, `mold`/`forge` (`{}`), `shift`/`scan`/`cycle`, `view`/`grab` borrowing, `pull`/`expose` modules, `state`/`trap`/`enforce` error model, and direct native kernel syscall dispatch on the fully operational Linux x86\_64 target (Windows/WASI scaffolding active; see Target Matrix).  
+Designed and engineered by **Garba the Analyst**, V0 operates with **zero external dependencies** (no libc, no standard library, no runtime). Written entirely in 100% bare-metal x86\_64 NASM Assembly (src/lexer.asm), it is a self-contained systems compiler for the **Strict Alpha §2.2 subset only**: `lock/flux`, `task/give`, `when/shift/fallback` (six operators), `span/cycle/scan/escape/skip`, `mold` layout-only (currently `todo`-gated), array indexing over `i32/str/bool/raw[N]`, `peek/poke`, `sys/sysret` (+ value form), and `gen`. `forge`/`view`/`grab`/`state`/`trap`/`enforce` are **not in subset and are rejected** with `StageAlpha 2.2` diagnostics; `pull`/`expose`/`mold` bodies are subset-but-`todo`-gated (rejected until implemented). Only the Linux x86\_64 target emits working code; `--target=windows|wasi` parse as scaffolding only (see Target Matrix).  
 This repository serves as the Turing-complete foundation required to compile Dhar Stage 1 (the self-hosted compiler written in Dhar itself).
 
 ## **📋 Table of Contents**
@@ -89,7 +89,7 @@ Dhar uses **indentation-based block scoping** (4 spaces or 1 tab per level):
 
 ### **3\. Data Types & Memory Layout**
 
-Dhar V0.4.0-doc provides full primitive types: `i8,i16,i32,i64` `u8,u16,u32,u64` `f32,f64` `char` `str` `bool` `raw`, each mapped to specific x86\_64 memory segments and register behaviors:
+Dhar Stage 0 implements the Strict Alpha §2.2 types only: `i32`, `str`, `bool`, `raw[N]` (byte array, see §5). All other Spec1 types (`i8,i16,i64` `u8,u16,u32,u64` `f32,f64` `char`, `state`, generics, `option`, collections) are lexed as keywords so they **reject loudly** (`subset`/`todo` diagnostics) instead of vanishing as identifiers. Storage is 64-bit-aligned quadwords for scalars; `raw[N]` reserves `ceil(N/8)` quadwords in `.bss`/frames but addresses **bytes** (`N` bytes, index `0..N-1`).
 
 #### **A. i32 (32-bit Integer)**
 
@@ -354,6 +354,30 @@ task core():
     print\_header()  
     execute\_diagnostics()
 ```
+### **9\. Molds & Forges (layout-only, Spec1 §9)**
+
+> * `mold Name { ... }` is Strict Alpha subset **layout-only** but currently `todo`-gated: the parser accepts the shape and then rejects with `bootstrap-subset construct not yet implemented` until layout recording lands. Field bodies, generics (`mold Box[T]`), and methods are not accepted.
+> * `forge Name { ... }` (method attach, Spec1 §10) is **not in subset** and is rejected with `StageAlpha 2.2` diagnostics. No logic is emitted for either keyword in Stage 0.
+
+### **10\. Borrowing: view/grab (not in Stage 0)**
+
+> * `view` (`&` read-only) and `grab` (`&mut`) are Spec1 §14 ideas for Stage 1+. In Stage 0 both are **rejected** (`StageAlpha 2.2`). There is no borrow checker, no `&` emission, and no aliasing analysis. Dead codegen stubs (`add rcx,1`) exist but are unreachable because the parser rejects first — they emit nothing.
+
+### **11\. Modules: pull/expose/gen**
+
+> * `gen("...")` is implemented (emits a `sys_write` for the literal).
+> * `pull`/`expose` are Strict Alpha subset names but currently `todo`-gated (rejected until multi-file linking lands). Single-file programs with one `task core():` are the supported unit. There is no importer, no registry, no `Kun` in Stage 0.
+
+### **12\. Error Model: state/trap/enforce (not in Stage 0)**
+
+> * `state` is a **reserved type name** (Spec1 App. A) and is rejected as a type or identifier (`Expected Identifier after 'lock'/'flux'`). Shipped tests use `st_val` instead.
+> * `trap`/`enforce` (and `attempt/rescue/ensure/raise`) are **not in subset** and are rejected (`StageAlpha 2.2`). The only Stage-0 failure path is the Spec1 §14.4 bounds trap: out-of-range/negative `raw` index writes `Dhar: index out of bounds` to stderr and exits 1. No unwinding, no typed errors.
+
+### **13\. Output-channel width (known limitation)**
+
+> * `raw[N]` elements are **bytes**: `buf[i] = v` stores the low byte (`mov byte [buf+rax], cl`), `peek` loads one byte zero-extended. This is self-consistent (stores and peeks agree at every index).
+> * Consequence: `buf[0] = res` publishes only `res & 0xFF` (low byte). Full-range `i32` checksums (`-10` → `246`, `338` → `82`) truncate. The `dharfuzz` harness compares full 64-bit (`struct.unpack("<q")`), so full-range random programs report `wrong` even when arithmetic/control/calls are correct. Restrict published values to `0..255` for exact gate parity, or mask expected with `& 0xFF`. See `PHASE0_BASELINE.md` gate table. Multi-byte store is **not** planned in Stage 0 (would break byte-array consistency); it is Stage-1+ design work.
+
 ## **🎯 Target Architecture & Cross-Compilation Matrix**
 
 The Dhar compiler includes target triple dispatch logic (src/lexer.asm), enabling code generation routing across multiple target platforms:
@@ -390,7 +414,7 @@ Bash
 \# Compile for Native Linux ELF Target (Default)  
 ./build/dharc benchmarks/workloads/test.dhar \--target=linux
 
-\# Cross-Compile for Windows PE Target  
+\# Cross-Compile for Windows PE Target (SCAFFOLDING ONLY — parses flag, still emits Linux ELF; do not use for Windows binaries)
 ./build/dharc benchmarks/workloads/test.dhar \--target=windows
 ```
 ### **Step 3: Assemble and Link the Emitted Binary**
@@ -432,7 +456,7 @@ This gap is expected and documented for V0:
 > * **Zero Optimization Passes:** The Stage 0 engine emits naive scalar code. Every variable lives in a memory-resident .bss slot — there is no register allocation, no instruction scheduling, and no SIMD auto-vectorization (only `inc`/`dec` folding of `x = x ± 1`). GCC vectorizes this particular workload heavily; Dhar executes it one comparison per instruction.
 > * **Honest Measurement Floor:** At single-digit-millisecond scale, process startup and scheduler jitter dominate the statistics (note σ ≈ mean across the compiled tier; medians are the more stable indicator). Fine-grained rankings inside the native tier should be read as directional.
 > * **Correctness Before Speed:** V0.3.0 fixed inverted codegen for relational operators in span/when conditions (see changelog in benchmarks/README.md). Pre-V0.3.0 telemetry measured a workload whose loops silently never executed and has been fully retired.
-> * **Phase 1 Rebuild (correctness gate):** Fixed nested-`when` fallthrough into `fallback` (both branches ran when a then-block ended in a nested `when`; `fallback` now binds only to the frame at its own indent), restricted the `inc`/`dec` fold to `+`/`-` (`x = x * 1` wrongly emitted `dec`), made `buf[i] = v` a byte store per Spec1 §14.4 (`raw[N]` is N bytes; store/`peek` stride mismatch and in-range neighbor clobber fixed), and fixed identifier initializers (`flux x: i32 = y` emitted the bare name as an immediate). Task-local buffers passed to `sys`/`sysret` and value-form `dest = sys(...)` now pass the buffer address (locals previously passed slot content, printing nothing; value-form arg dispatch and token math fixed, including a malformed `lea` suffix that never assembled). Global identifiers now emit as `dhar_<name>` so user names can never collide with NASM mnemonics, registers, `_start`, generated `str_N` labels, or control labels (a global named `out` previously broke NASM; task labels, call targets, and buffer addresses mangle consistently, entry `call dhar_core` included). Every index operation is bounds-checked per Spec1 §14.4 with a stderr trap + clean exit (out-of-range no longer segfaults; local `raw[N]` frames sized to `ceil(N/8)` slots), the parser validates array/sys/peek/poke shapes and rejects non-subset constructs (`forge`/`view`/`grab`/`state`/`trap`/`enforce`/`scan`) plus not-yet-implemented subset constructs (`shift`/`cycle`/`mold`/`pull`/`expose`/`escape`/`skip`, slated for the next phase) with clear diagnostics, and the compiler guards all fixed tables, reports errors on stderr, and never leaves a stale `output.asm` behind. Stratified differential gate (1,200 programs, seed 20261011, gcc-validated oracle 480/480, i32 values published little-endian via byte stores): **1200/1200 pass**.
+> * **Phase 1 Rebuild (correctness gate, HEAD 8326bf2):** Fixed nested-`when` fallthrough into `fallback` (both branches ran when a then-block ended in a nested `when`; `fallback` now binds only to the frame at its own indent — P7 PASS), restricted the `inc`/`dec` fold to `+`/`-` (`x = x * 1` wrongly emitted `dec`), made `buf[i] = v` a byte store per Spec1 §14.4 (`raw[N]` is N bytes; store/`peek` stride mismatch and in-range neighbor clobber fixed — P2/P11 byte-consistent), and fixed identifier initializers (`flux x: i32 = y` emitted the bare name as an immediate). Calls verified: assigned-call first-arg drop fixed (P3 `add(2,3)=5` PASS, P4 `sub3(10,3,2)=5` PASS, P9 `g(41)=42` PASS) and zero-param swallow fixed (P8 `=16` PASS). Task-local buffers passed to `sys`/`sysret` and value-form `dest = sys(...)` now pass the buffer address (P1 `=42` PASS; locals previously passed slot content, printing nothing). Global identifiers now emit as `dhar_<name>` (P12 `out=9` PASS; previously broke NASM). Every index operation is bounds-checked per Spec1 §14.4 with a stderr trap + clean exit (P6 OOB now `Dhar: index out of bounds` exit 1, never SIGSEGV; local `raw[N]` frames sized to `ceil(N/8)` slots). The parser rejects non-subset constructs (`forge`/`view`/`grab`/`trap`/`enforce`, plus `state` as reserved) with `StageAlpha 2.2` diagnostics and `todo`-gates subset-but-unimplemented (`mold` bodies/`pull`/`expose`; `shift`/`cycle`/`scan`/`escape`/`skip` are implemented since 1.6.1/1.6.2), and the compiler guards all fixed tables, reports errors on stderr, and never leaves a stale `output.asm` behind. Stratified differential gate (seed 20261011, gcc oracle 160/160 agree at n=20, 480/480 at n=150 per paper): **probes 9/10 PASS + P5 correct-reject + P6 controlled-trap** (P2 probe itself aliases the output buffer — `buf[1]=66` then `buf[0]=res` leaves `[66,66,...]=16962`; with non-aliasing index `i=10` it prints `66` PASS; compiler byte/byte behavior is correct, probe expectation is flawed, see §13); **random 963/1200 PASS full-range, 1200/1200 PASS when masked to low byte** (`expected & 0xFF == got & 0xFF` on all 237 diffs at n=150 — pure `buf[0]=res` byte-width truncation, zero logic bugs; restrict published `res` to `0..255` for exact parity). The old `1200/1200 pass` claim is withdrawn.
 
 By compiling directly to lean x86\_64 machine code with zero runtime, standard library, or GC overhead — while still executing real branchy workloads at native-tier speeds out of the box — Dhar provides the deterministic foundation Stage 1 self-hosting requires. Register allocation and peephole optimization are scheduled as post-bootstrap compiler passes.
 

@@ -7,7 +7,7 @@ This documentation covers the automated comparative benchmarking suite for Dhar.
 The entire benchmarking process is automated via a master Python harness named `orchestrator.py`.
 
 *   **Execution Command:** To run the full suite, execute the Python script from your terminal using `python3 orchestrator.py`.
-*   **Build Phase:** The orchestrator will automatically compile the source code for all target languages (such as invoking `gcc`, `g++`, `rustc`, and `javac`). The Dhar workload is compiled by the freshly built Stage 0 engine (`./build/dharc`) before timing begins.
+*   **Build Phase:** The orchestrator will automatically compile the source code for all target languages (such as invoking `gcc`, `g++`, `rustc`, and `javac`). The Dhar workload is compiled by the freshly built Stage 0 engine (`./build/dharc`) before timing begins. NOTE (honesty, 2026-10-14): `benchmarks/runners/*.sh` are 0-byte dead stubs — `orchestrator.py` is the real harness. Its build string assumes `build/output.asm` relative paths; run it from the repo root and verify fresh `output.asm` per language (stale-output hazard, cf. Phase 1.5b unlink fix).
 *   **Telemetry Generation:** After building, the script runs the benchmarking matrix using `hyperfine`.
 *   **Output:** The raw execution traces and JSON telemetry outputs are automatically exported and stored in the `benchmarks/results/` directory.
 
@@ -32,7 +32,9 @@ To ensure absolute parity, every language competitor executes an identical compu
 
 Workload sources: `benchmarks/workloads/test.dhar`, `test.c`, `test.cpp`, `test.rs`, `Test.java`, `test.js`, `test.php`, `test.py`.
 
-## **4. Comprehensive Performance Leaderboard (V0.2.3)**
+## **4. Comprehensive Performance Leaderboard (V0.2.3 measured; V0.3.0 in main README)**
+
+Measured table below is V0.2.3 telemetry (raw JSON in `results/`). Main `README.md` front table shows the V0.3.0 refresh (`C 1.58ms, Dhar 8.40 mean/7.28 med/±4.93, ~5.3x`) — same workload, frames/6-arg ABI build. Treat the two tables as same-benchmark refreshes, not competing claims; medians are stable, means carry startup jitter (σ≈mean).
 
 Aggregated telemetry from 100 timed runs per language after the V0.2.3 codegen correctness fix:
 

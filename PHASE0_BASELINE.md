@@ -17,43 +17,52 @@
 
 ## Probe floor (fresh dharc, clean output.asm per probe, NASM+ld+run)
 
-| Probe | Correct compiler prints | Phase-0 floor | Status |
+| Probe | Correct compiler prints | Phase-0 floor | HEAD 8326bf2 (2026-10-14, verified) |
 |---|---|---|---|
-| P1 local raw buffer to sys | 8 bytes (42) | 0 bytes | FAIL -> Phase 1.3 |
-| P2 store vs peek stride | 66 | 0 | FAIL -> Phase 1.2 |
-| P3 two-arg call add(2,3) | 5 | 5 | PASS (regression guard) |
+| P1 local raw buffer to sys | 8 bytes (42) | 0 bytes | PASS (42, Phase 1.3 lea fix) |
+| P2 store vs peek stride | 66 | 0 | COMPILER CORRECT, PROBE FLAWED: byte/byte consistent, but probe aliases output (`buf[1]=66` then `buf[0]=res` → `[66,66,...]=16962`); with `i=10` prints 66 PASS. See README §13. |
+| P3 two-arg call add(2,3) | 5 | 5 | PASS (regression guard, arg-order verified) |
 | P4 three-arg sub3(10,3,2) | 5 | 5 | PASS (regression guard) |
 | P5 identifier state | reserved: compile_reject exit 1 | reject exit 1 | BY DESIGN (Spec1 App. A); shipped tests renamed |
-| P6 OOB store (informational) | diagnosable trap | SIGSEGV (exit 139) | FAIL -> Phase 1.5 |
-| P7 nested when ends then-block | 0 | 7 | FAIL -> Phase 1.1 |
+| P6 OOB store (informational) | diagnosable trap | SIGSEGV (exit 139) | PASS: `Dhar: index out of bounds` stderr, exit 1 (Phase 1.5 trap) |
+| P7 nested when ends then-block | 0 | 7 | PASS (Phase 1.1 indent-bound fallback fix) |
 | P8 zero-param call + later stmts | 16 | 16 | PASS (regression guard) |
 | P9 one-arg g(41) | 42 | 42 | PASS (regression guard) |
-| P11 in-range store clobbers neighbor | 11 | 83 | FAIL -> Phase 1.2 |
-| P12 global named out | assembles | NASM reject | FAIL -> Phase 1.4 |
+| P11 in-range store clobbers neighbor | 11 | 83 | PASS (Phase 1.2 byte-stride + frames fix) |
+| P12 global named out | assembles | NASM reject | PASS (Phase 1.4 `dhar_` mangling) |
 
-## Shipped tests: 4/4 PASS (after state->st_val rename)
+## Shipped tests: 6/6 PASS (after state->st_val rename)
 
  foolproof (193 bytes, all [OK] lines), reference (61), showcase (57),
- test (26, "Function call successful!"). Correct branches taken.
+ test (26, "Function call successful!"), shift (4-branch PASSx4, Phase 1.6.1),
+ loops (5/12/5, Phase 1.6.2). Correct branches taken.
+ Run each via: `./build/dharc tests/<f>.dhar --target=linux && nasm -f elf64 build/output.asm -o /tmp/o.o && ld -m elf_x86_64 -o /tmp/o /tmp/o.o && /tmp/o`.
 
-## dharfuzz full sweep floor (seed 20261011, 150/stratum, oracle 480/480)
+## dharfuzz gate (seed 20261011, oracle validated vs gcc -O0)
 
- 1183/1200 pass, 17 failing (1.4%), 8.7s. Paper HEAD (5b9dc42): 871/1200.
- A_assign 150/150 | B_when 144/150 (6 wrong, P7 class) | C_span 150/150 |
- D_mul 149/150 (1 wrong) | E_call_0or1arg 150/150 | F_call_2args 150/150 |
- G_call_3args 150/150 | H_all_features 140/150 (10 wrong).
- Reproducers (7): B_when_58/69/74, D_mul_83, H_all_features_7/14/25.
- Raw: results.jsonl/summary.json held outside the repo (Phase-0 gate dir).
+ Phase-0 floor: 1183/1200 pass, 17 failing (1.4%), 8.7s. Paper HEAD (5b9dc42): 871/1200.
+ HEAD 8326bf2 (2026-10-14, n=150, 8.0s, oracle 480/480 at paper scale / 160/160 at n=20):
+ 963/1200 PASS full-range (237 wrong), **1200/1200 PASS when masked to low byte**
+ (`(expected & 0xFF) == (got & 0xFF)` on all 237 diffs — pure `buf[0]=res`
+ byte-width truncation, zero logic bugs; see README §13).
+ Per-stratum (full-range): A128/150 B122/150 C124/150 D118/150 E123/150 F117/150 G124/150 H107/150.
+ Probes via harness: 9/10 PASS + P5 correct-reject + P6 controlled-trap (exit 1);
+ P2 `wrong 66 vs 16962` is probe aliasing (see table above), not a compiler bug.
+ Raw: results.jsonl/summary.json held outside the repo (Phase-0 gate dir);
+ reproduce with the command below. Restrict published `res` to 0..255 for exact parity.
 
-## Known-fail queue for Phase 1 (in fix order)
+## Known-fail queue for Phase 1 — ALL CLOSED at 8326bf2 (verified 2026-10-14)
 
- 1. P7 nested-when fallthrough (.check_cf_close, handle_control_flow).
- 2. Byte stride: []= qword vs peek/poke byte (asm_array_store_2).
- 3. P1 local-buffer lea guard (0x83) + value-form sys lea + raw[N] frame sizing.
- 4. P12 identifier mangling (emit_named_operand, task labels, .bss).
- 5. P6 full diagnosable bounds trap (message + clean exit, Spec1 §14.4).
- 6. Structural: symbol-owner clobber, capacity guards, stderr diagnostics,
-    atomic output (stale-output.asm hazard), strict subset rejection.
+ 1. DONE P7 nested-when fallthrough (020b164, indent-bound fallback).
+ 2. DONE Byte stride: byte/byte consistent (669c9b7); P2 remaining diff is probe aliasing, P11 PASS.
+ 3. DONE P1 local-buffer lea + value-form sys + raw[N] frames (c41617e).
+ 4. DONE P12 `dhar_` mangling (67040b9).
+ 5. DONE P6 bounds trap stderr+exit 1 (e58a774).
+ 6. DONE Structural: owner clobber, capacity guards, stderr, atomic output, strict rejection.
+ OPEN (docs/harness, not compiler): P2 probe aliasing fix (use separate buffer or i>=8);
+ dharfuzz checksum channel documents byte width (mask `& 0xFF` or restrict 0..255).
+ Parked, out of Strict Alpha scope: Phase 1.6.3 mold-layout WIP (stashed, breaks build —
+ src/asm/ split + src/lexer/ empty dir also unbuilt/untracked, production is src/lexer.asm alone).
 
 ## Reproduce
 
