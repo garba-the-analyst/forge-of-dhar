@@ -31,11 +31,12 @@
 | P11 in-range store clobbers neighbor | 11 | 83 | PASS (Phase 1.2 byte-stride + frames fix) |
 | P12 global named out | assembles | NASM reject | PASS (Phase 1.4 `dhar_` mangling) |
 
-## Shipped tests: 6/6 PASS (after state->st_val rename)
+## Shipped tests: 7/7 PASS (after state->st_val rename)
 
  foolproof (193 bytes, all [OK] lines), reference (61), showcase (57),
  test (26, "Function call successful!"), shift (4-branch PASSx4, Phase 1.6.1),
- loops (5/12/5, Phase 1.6.2). Correct branches taken.
+ loops (5/12/5, Phase 1.6.2), calls (57 = 5+5+5+42, Phase 1.1 multi-task
+ 0/1/2/3-arg gate with distinct locals r1..r4 — PASS).
  Run each via: `./build/dharc tests/<f>.dhar --target=linux && nasm -f elf64 build/output.asm -o /tmp/o.o && ld -m elf_x86_64 -o /tmp/o /tmp/o.o && /tmp/o`.
 
 ## dharfuzz gate (seed 20261011, oracle validated vs gcc -O0)
@@ -61,6 +62,16 @@
  6. DONE Structural: owner clobber, capacity guards, stderr, atomic output, strict rejection.
  OPEN (docs/harness, not compiler): P2 probe aliasing fix (use separate buffer or i>=8);
  dharfuzz checksum channel documents byte width (mask `& 0xFF` or restrict 0..255).
+ OPEN BUG (compiler, found 2026-10-14 on fix/phase-1.1-arg-integrity): same-name
+ body locals across tasks collide — `add(a,b)+r` then `sub3(a,b,c)+r` puts sub3's
+ `r` at `[rbp-24]`, clobbering param `c` (got 5, want 10; 4-task variant got 52,
+ want 57). Distinct locals (r1..r4, tests/calls.dhar) PASS 57. Zero-param then
+ 2-param sharing `r` passes; 3-param as 2nd+ task fails regardless of param names;
+ order-reversed (3-param first) passes with a harmless +8 gap. Suspect add_symbol
+ local_counts vs precompute scan_frame_off for 2nd+ task body locals (offsets from
+ add_symbol kept because pf_mark_local skips non-zero; frame sizes correct, individual
+ offsets wrong). Repro: /tmp/calls_same_name_repro.dhar (see fix-branch log).
+ Fix requires frame/owner audit — NOT claimed fixed here.
  Parked, out of Strict Alpha scope: Phase 1.6.3 mold-layout WIP (stashed, breaks build —
  src/asm/ split + src/lexer/ empty dir also unbuilt/untracked, production is src/lexer.asm alone).
 
