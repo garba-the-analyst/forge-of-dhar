@@ -1,0 +1,31 @@
+flux buf: raw[8]
+task add(a: i32, b: i32):
+    flux r1: i32 = 0
+    r1 = a + b
+    give r1
+task sub3(a: i32, b: i32, c: i32):
+    flux r2: i32 = 0
+    r2 = a - b
+    r2 = r2 - c
+    give r2
+task f():
+    flux r3: i32 = 5
+    give r3
+task g(a: i32):
+    flux r4: i32 = 0
+    r4 = a + 1
+    give r4
+task core():
+    flux res: i32 = 0
+    flux z: i32 = 0
+    flux t: i32 = 0
+    t = add(2, 3)
+    res = res + t
+    t = sub3(10, 3, 2)
+    res = res + t
+    t = f()
+    res = res + t
+    t = g(41)
+    res = res + t
+    buf[z] = res
+    sys 1, 1, buf, 8
