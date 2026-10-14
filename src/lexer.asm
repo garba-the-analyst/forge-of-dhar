@@ -6007,7 +6007,11 @@ add_symbol:
     mov qword [rbx + 20], 0         ; tasks are global
     xor eax, eax                    ; ensure eax=0 for local check
 .as_owner_set:
-    mov qword [rbx + 16], 0         
+    mov dword [rbx + 16], 0         ; Phase 1.1b: dword only — qword here
+                                    ; clobbered the owner at [rbx+20] (bytes
+                                    ; 20..23), forcing every symbol global and
+                                    ; collapsing same-name locals across tasks
+                                    ; (sub3 r reused add r at [rbp-24]).
     mov [rbx + 24], r10             
     
     ; V0.4.1: auto-mark task-local variables (owner>0, not task decl)
