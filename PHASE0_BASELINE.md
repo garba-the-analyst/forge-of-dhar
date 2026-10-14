@@ -76,6 +76,23 @@
  `mov dword [rbx+16],0` (commit 989c981, gdb-verified owners 1/2/3, offsets
  sequential). tests/calls.dhar now uses the shared name r (stronger) and PASSES 57;
  min repros A[0p,3p]=12 B[1p,3p]=47 C[3p,3p]=11 all PASS.
+ FIXED 2026-10-14 on fix/subset-gaps (merged here) — systematic §2.2 audit found
+ three more gaps, all closed in run_parser only (no codegen change):
+  a. Silent-drop ident statements (`y += 1`, `y + 1`, bare `y` compiled to no-ops):
+     .check_identifier fallthroughs now `.err_shape`; line-leading idents only
+     (interior idents share their statement line and keep the legacy skip, so
+     `r = a + b` trailing operands still pass).
+  b. Extra Spec1 widths (`i8..u64 f32/f64 char`) accepted as i32-width storage:
+     var-decl and param types now allowlist `i32/str/raw/bool` else `.err_subset`.
+  c. Undeclared/task/array idents as values (`x = nosuch`, `x = taskname`,
+     `flux x: i32 = nosuch`) passed the parser and died at NASM: scalar-assign
+     and decl-init RHS idents now scoped-checked (undeclared/task/array →
+     `.err_undeclared`/`.err_expr`); `dest = fn(...)` call RHS still passes.
+ Notes: `bool` has storage but no `true`/`false` literals (they are undeclared
+ idents — use 1/0; now a clean diagnostic instead of a NASM error); `print()`,
+ `foo(a,b):`, 7-arg calls, double fallback all reject loudly (verified).
+ Gate: tests/conformance_alpha.sh 35/35; shipped 7/7; probes 8/8+P5+P6;
+ fuzz n=150 identical (963/1200, 237 truncation-only, 0 real); Honing 8/8.
  Parked, out of Strict Alpha scope: Phase 1.6.3 mold-layout WIP (stashed, breaks build —
  src/asm/ split + src/lexer/ empty dir also unbuilt/untracked, production is src/lexer.asm alone).
 

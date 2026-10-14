@@ -1780,8 +1780,16 @@ run_parser:
     cmp byte [r12], 4               
     jne .err_syntax
     mov r11b, [r12 + 1]              ; base type (i32=1, str=2, raw=3)
-    cmp r11b, 15                    ; Phase 1.5c: 'state' type not in subset
-    je .err_subset
+    cmp r11b, 1                     ; StageAlpha §2.2: i32/str/bool/raw[N] only
+    je .param_type_ok
+    cmp r11b, 2
+    je .param_type_ok
+    cmp r11b, 3
+    je .param_type_ok
+    cmp r11b, 14                    ; bool
+    je .param_type_ok
+    jmp .err_subset
+.param_type_ok:
 
     ; Default: consume 3 tokens (name, colon, type)
     mov rdi, 3
@@ -1904,9 +1912,17 @@ run_parser:
     cmp byte [r12], 4                       
     jne .err_var_type
     
-    mov r9b, [r12 + 1]              
-    cmp r9b, 15                     ; Phase 1.5c: 'state' type not in subset
-    je .err_subset
+    mov r9b, [r12 + 1]
+    cmp r9b, 1                       ; StageAlpha §2.2: i32/str/bool/raw[N] only
+    je .var_type_ok                  ; (extra Spec1 widths used to slip through
+    cmp r9b, 2                       ; as i32-width storage — silent mismatch)
+    je .var_type_ok
+    cmp r9b, 3
+    je .var_type_ok
+    cmp r9b, 14                      ; bool
+    je .var_type_ok
+    jmp .err_subset
+.var_type_ok:
     mov r14d, [rbx + 4]             
     mov r15w, [rbx + 2]             
     
@@ -1980,6 +1996,35 @@ run_parser:
     jmp .err_assign_val
     
 .valid_inline_rhs:
+    ; Identifier initializers must resolve to a plain scalar (undeclared /
+    ; task / array idents used to pass the parser and die loudly at NASM;
+    ; mirror the store value checks). rdi is the decl length — preserved.
+    cmp byte [r12], 2
+    jne .vir_not_ident
+    push rdi
+    push rsi                        ; keep 16-byte stack alignment across call
+    mov rdi, [r12 + 8]
+    call find_symbol_scoped         ; preserves rbx/rcx/rdi/r8/r12; rax/rdx out
+    cmp rax, 1
+    jne .vir_undecl
+    cmp byte [rdx + 8], 3           ; task callee has no scalar value
+    je .vir_bad
+    cmp byte [rdx + 8], 11          ; lock array has no scalar value
+    je .vir_bad
+    cmp byte [rdx + 8], 12          ; flux array has no scalar value
+    je .vir_bad
+    pop rsi
+    pop rdi
+    jmp .vir_not_ident
+.vir_undecl:
+    pop rsi
+    pop rdi
+    jmp .err_undeclared
+.vir_bad:
+    pop rsi
+    pop rdi
+    jmp .err_expr
+.vir_not_ident:
     add rdi, 2
     ; Phase 1.5c: the value must end the statement — a trailing operator
     ; would silently drop (codegen stores one value only). r10 holds the
@@ -2027,24 +2072,38 @@ run_parser:
     jmp .next_token
 
 .check_identifier:
+    ; Interior idents share their line with earlier tokens (trailing operand
+    ; `b` in `r = a + b`, call args, condition operands, `give` targets) and
+    ; are validated by their statement checker — skip them as before. Only a
+    ; line-leading ident starts a statement and is strictly validated below.
+    cmp rcx, 0
+    je .ci_line_start
+    mov rax, rcx
+    dec rax
+    shl rax, 4
+    lea r12, [token_array + rax]
+    mov eax, [r12 + 4]              ; previous token's line
+    cmp eax, [rbx + 4]              ; vs current token's line
+    je .next_token                  ; same line: interior ident, legacy skip
+.ci_line_start:
     mov rax, rcx
     inc rax
     cmp rax, [token_count]
-    jge .next_token                 
+    jge .err_shape                    ; lone trailing identifier is malformed
 
     shl rax, 4
     lea r12, [token_array + rax]
-    cmp byte [r12], 3               
-    jne .next_token
-    
-    cmp byte [r12 + 1], 4           
+    cmp byte [r12], 3
+    jne .err_shape                    ; ident-led statements are assign/call/array only
+
+    cmp byte [r12 + 1], 4
     je .valid_assign
     cmp byte [r12 + 1], 8
     je .valid_assign
-    
-    cmp byte [r12 + 1], 2           
+
+    cmp byte [r12 + 1], 2
     je .valid_task_call
-    jmp .next_token                 
+    jmp .err_shape                    ; e.g. `y += 1`, `y + 1`: no silent drop
 
 .valid_task_call:
     mov r13, [rbx + 8]              
@@ -2261,15 +2320,42 @@ run_parser:
     mov rax, rcx
     add rax, 2
     cmp rax, [token_count]
-    jge .normal_assign_skip
+    jge .err_shape                     ; truncated `dest =` at EOF
     shl rax, 4
     lea r12, [token_array + rax]
     
     cmp byte [r12], 1
     je .check_sys_assign_parser
+    ; Scalar `dest = value`: identifier values must resolve to a plain scalar
+    ; (undeclared/task/array idents used to pass the parser and die loudly at
+    ; NASM; mirror the array-store value check above).
+    cmp byte [r12], 2
+    jne .normal_assign_skip
+    mov rdi, [r12 + 8]
+    call find_symbol_scoped         ; preserves rbx/rcx/rdi/r8/r12; rax/rdx out
+    cmp rax, 1
+    jne .err_undeclared
+    cmp byte [rdx + 8], 3           ; task name: valid only as call RHS
+    jne .sa_val_not_task            ; `dest = fn(...)` (codegen emits the call)
+    mov rax, rcx                    ; otherwise a task address read: reject
+    add rax, 3
+    cmp rax, [token_count]
+    jge .err_expr
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 3
+    jne .err_expr
+    cmp byte [r12 + 1], 2           ; '('?
+    jne .err_expr
+    jmp .normal_assign_skip
+.sa_val_not_task:
+    cmp byte [rdx + 8], 11          ; lock array has no scalar value
+    je .err_expr
+    cmp byte [rdx + 8], 12          ; flux array has no scalar value
+    je .err_expr
 
 .normal_assign_skip:
-    add rcx, 2                      
+    add rcx, 2
     jmp .next_token
 
 .check_sys_assign_parser:
