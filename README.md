@@ -356,7 +356,7 @@ task core():
 ```
 ### **9\. Molds & Forges (layout-only, Spec1 §9)**
 
-> * `mold Name { ... }` is Strict Alpha subset **layout-only** but currently `todo`-gated: the parser accepts the shape and then rejects with `bootstrap-subset construct not yet implemented` until layout recording lands. Field bodies, generics (`mold Box[T]`), and methods are not accepted.
+> * `mold Name { ... }` is implemented: the parser validates the header and every `lock`/`flux` field line (subset primitives, `raw[N]` sized; no defaults, no generics, no nested types/molds), records `(name, field-count, byte-size)` in a 64-entry type table (separate namespace; redefinition rejected), and the code generator skips the block emitting nothing. Empty molds accepted; unterminated `{` rejected at EOF. Fields create no symbols (use outside rejects as undeclared). Per-field offsets are Beta's job — the bridge records the layout summary only.
 > * `forge Name { ... }` (method attach, Spec1 §10) is **not in subset** and is rejected with `StageAlpha 2.2` diagnostics. No logic is emitted for either keyword in Stage 0.
 
 ### **10\. Borrowing: view/grab (not in Stage 0)**
@@ -366,7 +366,7 @@ task core():
 ### **11\. Modules: pull/expose/gen**
 
 > * `gen("...")` is implemented (emits a `sys_write` for the literal).
-> * `pull`/`expose` are Strict Alpha subset names but currently `todo`-gated (rejected until multi-file linking lands). Single-file programs with one `task core():` are the supported unit. There is no importer, no registry, no `Kun` in Stage 0.
+> * `pull <ident|string>` is implemented as a validated directive: the single-file bridge links exactly one file, so it binds nothing (real module resolution is Beta). `expose <ident>` additionally requires a previously declared symbol. Both emit no code. There is no importer, no registry, no `Kun` in Stage 0. Single-file programs with one `task core():` remain the supported unit.
 
 ### **12\. Error Model: state/trap/enforce (not in Stage 0)**
 
@@ -379,7 +379,7 @@ task core():
 > * `raw[N]` elements are **bytes**: `buf[i] = v` stores the low byte (`mov byte [buf+rax], cl`), `peek` loads one byte zero-extended. This is self-consistent (stores and peeks agree at every index).
 > * Consequence: `buf[0] = res` publishes only `res & 0xFF` (low byte). Full-range `i32` checksums (`-10` → `246`, `338` → `82`) truncate. The `dharfuzz` harness compares full 64-bit (`struct.unpack("<q")`), so full-range random programs report `wrong` even when arithmetic/control/calls are correct. Restrict published values to `0..255` for exact gate parity, or mask expected with `& 0xFF`. See `PHASE0_BASELINE.md` gate table. Multi-byte store is **not** planned in Stage 0 (would break byte-array consistency); it is Stage-1+ design work.
 
-> * **`bool` literals:** `bool` storage works with `0`/`1` (`when b == 1` passes); `true`/`false` are not literals — they resolve as (undeclared) identifiers and now fail with a clean `undeclared variable` diagnostic instead of a NASM error. Repeat the battery any time with `tests/conformance_alpha.sh` (35 cases, needs `nasm`/`ld`/`python3`).
+> * **`bool` literals:** `true`/`false` are numeric `1`/`0` (lexer rewrite, shared numeric path): `flux b: bool = true` and `when b == true` pass. The words are reserved and rejected as identifiers. Repeat the battery any time with `tests/conformance_alpha.sh` (43 cases, needs `nasm`/`ld`/`python3`).
 
 ## **🎯 Target Architecture & Cross-Compilation Matrix**
 

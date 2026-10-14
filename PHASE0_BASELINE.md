@@ -91,8 +91,31 @@
  Notes: `bool` has storage but no `true`/`false` literals (they are undeclared
  idents — use 1/0; now a clean diagnostic instead of a NASM error); `print()`,
  `foo(a,b):`, 7-arg calls, double fallback all reject loudly (verified).
- Gate: tests/conformance_alpha.sh 35/35; shipped 7/7; probes 8/8+P5+P6;
+ Gate: tests/conformance_alpha.sh 43/43; shipped 7/7; probes 8/8+P5+P6;
  fuzz n=150 identical (963/1200, 237 truncation-only, 0 real); Honing 8/8.
+ IMPLEMENTED 2026-10-14 on fix/stage0-complete (merged here) — remaining §2.2
+ rows closed in lexer/parser only (no codegen emission changes except the mold
+ block skip):
+  d. bool literals: `true`/`false` rewrite to numeric 1/0 in process_current_word
+     (shared numeric path; conditions/inits key on type 5). `true` as an identifier
+     now rejects; `flux b: bool = true`, `when b == true` pass (battery 12).
+  e. pull/expose: `pull <ident|string>` shape-validated, binds nothing (single-file
+     bridge — documented); `expose <ident>` additionally requires a declared symbol.
+     Codegen handlers already consumed 2 tokens and emit nothing (comments added).
+  f. mold layout-only: `mold Name {` registers (name, field-count, byte-size) in a
+     new 64-entry table (separate type namespace; redefinition rejected; generics
+     and field defaults rejected as not-subset); lock/flux field lines inside an
+     open mold record slots (scalar 1, raw ceil(N/8)) without creating symbols;
+     `}` finalizes size; unterminated `{` now rejects at EOF (new balance check);
+     codegen skips the balanced block emitting nothing. Empty molds accepted.
+     Fields never leak into the symbol table (verified: field-name use outside
+     rejects as undeclared). Two sharp edges found and fixed during implementation:
+     the new global helper re-anchored parser locals (kept local: `.find_mold`),
+     and the header consumed onto `{` so depth never incremented (consume 1).
+     Nested molds and nested-mold field types reject as not-subset.
+ §3 modularity: still open — the stashed src/asm split is baseline-vintage (4798
+ lines, predates all Phase-1 fixes) and cannot integrate without regressing; a
+ fresh split of the current monolith is future surgery, gated by this file's suite.
  Parked, out of Strict Alpha scope: Phase 1.6.3 mold-layout WIP (stashed, breaks build —
  src/asm/ split + src/lexer/ empty dir also unbuilt/untracked, production is src/lexer.asm alone).
 

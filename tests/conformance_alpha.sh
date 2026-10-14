@@ -180,26 +180,104 @@ task core():
     buf[z] = got
     sys 1, 1, buf, 8' 65
 # oob-trap: RUNTIME trap by design (exit 1 + stderr, no segfault) — verified below
-# ---- Subset-but-todo ----
-t "mold-empty" reject 'flux buf: raw[8]
-mold Point {
+# ---- Subset implemented: mold / pull / expose ----
+t "mold-decl" run 'mold Point {
+    flux x: i32
+    flux y: i32
+    lock tag: str
+    flux ok: bool
+    flux buf: raw[16]
 }
+flux out: raw[8]
 task core():
     flux z: i32 = 0
-    buf[z] = z
-    sys 1, 1, buf, 8'
-t "pull" reject 'pull math
+    flux res: i32 = 0
+    res = 11
+    out[z] = res
+    sys 1, 1, out, 8' 11
+t "mold-empty" run 'mold E {
+}
+flux buf: raw[8]
+task core():
+    flux z: i32 = 0
+    flux res: i32 = 13
+    buf[z] = res
+    sys 1, 1, buf, 8' 13
+t "mold-badfield" reject 'mold P {
+    flux x: f32
+}
 flux buf: raw[8]
 task core():
     flux z: i32 = 0
     buf[z] = z
     sys 1, 1, buf, 8'
-t "expose" reject 'expose dist
+t "mold-redefine" reject 'mold P {
+    flux x: i32
+}
+mold P {
+    flux y: i32
+}
 flux buf: raw[8]
 task core():
     flux z: i32 = 0
     buf[z] = z
     sys 1, 1, buf, 8'
+t "mold-generics" reject 'mold P[T] {
+    flux x: i32
+}
+flux buf: raw[8]
+task core():
+    flux z: i32 = 0
+    buf[z] = z
+    sys 1, 1, buf, 8'
+t "mold-default" reject 'mold P {
+    flux x: i32 = 5
+}
+flux buf: raw[8]
+task core():
+    flux z: i32 = 0
+    buf[z] = z
+    sys 1, 1, buf, 8'
+t "mold-unclosed" reject 'mold P {
+    flux x: i32
+'
+t "pull" run 'pull "stdlib"
+flux buf: raw[8]
+task helper():
+    flux r: i32 = 0
+    r = 40 + 2
+    give r
+expose helper
+task core():
+    flux z: i32 = 0
+    flux res: i32 = 0
+    res = helper()
+    buf[z] = res
+    sys 1, 1, buf, 8' 42
+t "pull-bare" reject 'pull
+flux buf: raw[8]
+task core():
+    flux z: i32 = 0
+    buf[z] = z
+    sys 1, 1, buf, 8'
+t "expose-undeclared" reject 'flux buf: raw[8]
+task core():
+    flux z: i32 = 0
+    buf[z] = z
+    sys 1, 1, buf, 8
+expose nosuch'
+t "bool-literals" run 'flux buf: raw[8]
+task core():
+    flux z: i32 = 0
+    flux res: i32 = 0
+    flux b: bool = true
+    flux c: bool = false
+    when b == true:
+        res = res + 7
+    when c == false:
+        res = res + 5
+    buf[z] = res
+    sys 1, 1, buf, 8' 12
 # ---- NEGATIVE: non-subset ----
 t "forge" reject 'forge Point {
 }

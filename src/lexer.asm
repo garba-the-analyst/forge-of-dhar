@@ -65,6 +65,8 @@ section .data
     kw_f64 db "f64", 0
     kw_char db "char", 0
     kw_bool db "bool", 0
+    kw_true db "true", 0
+    kw_false db "false", 0
     ; TARGET TRIPLE STRINGS
     str_target_linux db "--target=linux", 0
     str_target_windows db "--target=windows", 0
@@ -417,6 +419,15 @@ section .bss
                                     ; 4 task,5 shift-link,6 cycle,7 scan)
     parse_cf_depth resq 1           ; current depth
     parse_brace_depth resq 1        ; { } nesting level
+    ; --- mold layout registry (StageAlpha §2.2, layout only): separate type
+    ;     namespace; the bridge records (name, field count, byte size) and
+    ;     emits no code. Per-field offsets are Beta's job (it re-parses).
+    mold_names resq 64            ; mold type name string ptrs
+    mold_sizes resq 64            ; layout size in bytes
+    mold_fcounts resq 64          ; field counts
+    mold_count resq 1             ; declared molds (cap 64, else fatal_full)
+    mold_open resq 1              ; 1-based open mold while parsing fields
+    mold_cur_off resq 1           ; running layout offset of the open mold
 
 section .text
     global _start
@@ -974,8 +985,9 @@ run_parser:
     xor rcx, rcx                    
 
 .parse_loop:
-    cmp rcx, [token_count]          
-    jge .parse_success
+    cmp rcx, [token_count]
+    jge .parse_eof_check
+.parse_body:
     mov rax, rcx
     shl rax, 4                      
     lea rbx, [token_array + rax]    
@@ -995,6 +1007,15 @@ run_parser:
     cmp qword [parse_brace_depth], 0
     je .err_shape                   ; unbalanced '}'
     dec qword [parse_brace_depth]
+    ; Closing a mold body finalizes its recorded layout size.
+    mov rax, [mold_open]
+    test rax, rax
+    jz .brace_no_mold
+    dec rax
+    mov rdx, [mold_cur_off]
+    mov [mold_sizes + rax*8], rdx
+    mov qword [mold_open], 0
+.brace_no_mold:
     jmp .next_token
 .brace_open:
     inc qword [parse_brace_depth]
@@ -1041,18 +1062,18 @@ run_parser:
     je .check_scan_stmt
     cmp r9b, 14                     ; cycle: infinite loop
     je .check_cycle_stmt
-    cmp r9b, 15                     ; mold: subset (layout), Phase 1.6
-    je .err_todo
+    cmp r9b, 15                     ; mold: layout declaration (see .check_mold_stmt)
+    je .check_mold_stmt
     cmp r9b, 16                     ; forge: not in subset
     je .err_subset
     cmp r9b, 17                     ; view: not in subset
     je .err_subset
     cmp r9b, 18                     ; grab: not in subset
     je .err_subset
-    cmp r9b, 19                     ; pull: subset, Phase 1.6
-    je .err_todo
-    cmp r9b, 20                     ; expose: subset, Phase 1.6
-    je .err_todo
+    cmp r9b, 19                     ; pull: module directive (single-file: binds nothing)
+    je .check_pull_stmt
+    cmp r9b, 20                     ; expose: publishes a declared name
+    je .check_expose_stmt
     cmp r9b, 21                     ; state
     je .check_state_stmt
     cmp r9b, 22                     ; trap: not in subset
@@ -1496,7 +1517,209 @@ run_parser:
     jae .err_orphan                 ; loop must strictly contain this line
     jmp .next_token
 .check_mold_stmt:
-    add rcx, 2
+    ; `mold Name {` — layout declaration (StageAlpha §2.2, layout only).
+    ; Registers the type in the mold table (separate type namespace) and opens
+    ; it for field recording. Emits nothing (codegen skips the block).
+    ; rbx = mold token.
+    mov rax, rcx
+    inc rax
+    cmp rax, [token_count]
+    jge .err_shape
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 2               ; mold name ident?
+    jne .err_shape
+    mov rdi, [r12 + 8]
+    call .find_mold                 ; rax = 1-based idx, 0 = missing
+    cmp rax, 0
+    jne .err_redeclared             ; mold types cannot be redeclared
+    mov rax, rcx
+    add rax, 2
+    cmp rax, [token_count]
+    jge .err_shape
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 3
+    jne .err_shape
+    cmp byte [r12 + 1], 8           ; '[' (generics `mold P[T]`)?
+    je .err_subset                  ; generics are not subset
+    cmp byte [r12 + 1], 19          ; '{'?
+    jne .err_shape
+    mov rax, [mold_count]
+    cmp rax, 64
+    jae fatal_full
+    mov rdx, rcx                    ; reload mold name ptr (r12 was reused)
+    inc rdx
+    shl rdx, 4
+    lea r12, [token_array + rdx]
+    mov r13, [r12 + 8]
+    mov [mold_names + rax*8], r13
+    mov qword [mold_sizes + rax*8], 0
+    mov qword [mold_fcounts + rax*8], 0
+    inc qword [mold_count]
+    inc rax
+    mov [mold_open], rax            ; 1-based open mold
+    mov qword [mold_cur_off], 0
+    add rcx, 1                      ; consume `mold` (Name + `{` dispatch next:
+                                    ; Name validates below, `{` counts depth)
+    jmp .next_token
+
+; .find_mold: rdi = NUL-terminated name → rax = 1-based mold idx, 0 = missing.
+; Preserves rbx, rcx, rdi, rsi. Local to run_parser (a global here would
+; re-anchor every parser label below it and break the build).
+.find_mold:
+    push rbx
+    push rcx
+    push rdx
+    push r8
+    xor r8, r8
+.fm_loop:
+    cmp r8, [mold_count]
+    jge .fm_fail
+    mov rdx, [mold_names + r8*8]
+    call string_compare             ; (rdi, rdx); keeps rbx/rcx/rdi/rdx
+    cmp rax, 1
+    je .fm_hit
+    inc r8
+    jmp .fm_loop
+.fm_fail:
+    xor rax, rax
+    jmp .fm_exit
+.fm_hit:
+    mov rax, r8
+    inc rax
+.fm_exit:
+    pop r8
+    pop rdx
+    pop rcx
+    pop rbx
+    ret
+
+.check_mold_field:
+    ; lock/flux name : TYPE inside an open mold — layout recording only.
+    ; No symbols are created and no code is emitted. No defaults, no
+    ; nested-mold/generic types. Consumes through the type (or `]`).
+    ; rbx = lock/flux token.
+    mov rax, rcx
+    inc rax                         ; field name
+    cmp rax, [token_count]
+    jge .err_shape
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 2
+    jne .err_shape
+    mov rax, rcx
+    add rax, 2                      ; ':'
+    cmp rax, [token_count]
+    jge .err_shape
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 3
+    jne .err_shape
+    cmp byte [r12 + 1], 1
+    jne .err_shape
+    mov rax, rcx
+    add rax, 3                      ; type
+    cmp rax, [token_count]
+    jge .err_shape
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 4               ; primitive type?
+    jne .err_subset                 ; nested-mold types defer to Beta
+    mov r10b, [r12 + 1]
+    cmp r10b, 1                     ; i32
+    je .mf_scalar
+    cmp r10b, 2                     ; str
+    je .mf_scalar
+    cmp r10b, 14                    ; bool
+    je .mf_scalar
+    cmp r10b, 3                     ; raw: sized [N] or bare (1 slot)
+    jne .err_subset                 ; other widths + state: not subset
+    mov rax, rcx                    ; raw: '[' or '=' or end?
+    add rax, 4
+    cmp rax, [token_count]
+    jge .mf_bare_raw
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 3
+    jne .mf_bare_raw
+    cmp byte [r12 + 1], 8           ; '['?
+    je .mf_raw_sized
+    cmp byte [r12 + 1], 4           ; '=' default?
+    je .err_subset                  ; field defaults are not subset
+.mf_bare_raw:
+    mov r10, 1
+    jmp .mf_record_consume3
+.mf_scalar:
+    mov rax, rcx                    ; '=' default?
+    add rax, 4
+    cmp rax, [token_count]
+    jge .mf_scalar_noinit
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 3
+    jne .mf_scalar_noinit
+    cmp byte [r12 + 1], 4
+    je .err_subset                  ; field defaults are not subset
+.mf_scalar_noinit:
+    mov r10, 1
+.mf_record_consume3:
+    shl r10, 3
+    add [mold_cur_off], r10
+    mov rax, [mold_open]
+    dec rax
+    inc qword [mold_fcounts + rax*8]
+    add rcx, 3                      ; consume kw..type
+    jmp .next_token
+.mf_raw_sized:
+    mov rax, rcx                    ; number
+    add rax, 5
+    cmp rax, [token_count]
+    jge .err_shape
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 5
+    jne .err_shape
+    mov rax, rcx                    ; ']'
+    add rax, 6
+    cmp rax, [token_count]
+    jge .err_shape
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 3
+    jne .err_shape
+    cmp byte [r12 + 1], 9
+    jne .err_shape
+    mov rax, rcx                    ; '=' default?
+    add rax, 7
+    cmp rax, [token_count]
+    jge .mf_raw_noinit
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 3
+    jne .mf_raw_noinit
+    cmp byte [r12 + 1], 4
+    je .err_subset                  ; field defaults are not subset
+.mf_raw_noinit:
+    mov rax, rcx                    ; size digits at rcx+5
+    add rax, 5
+    shl rax, 4
+    lea r12, [token_array + rax]
+    mov rdi, [r12 + 8]
+    call parse_uint                 ; rax = N; preserves rbx/rcx/rdi
+    mov r10, rax
+    add r10, 7
+    shr r10, 3                      ; slots = ceil(N/8)
+    test r10, r10
+    jnz .mf_raw_slots
+    mov r10, 1                      ; degenerate raw[0]: one slot floor
+.mf_raw_slots:
+    shl r10, 3
+    add [mold_cur_off], r10
+    mov rax, [mold_open]
+    dec rax
+    inc qword [mold_fcounts + rax*8]
+    add rcx, 6                      ; consume kw..']'
     jmp .next_token
 .check_forge_stmt:
     add rcx, 2
@@ -1508,9 +1731,38 @@ run_parser:
     add rcx, 1
     jmp .next_token
 .check_pull_stmt:
+    ; `pull <ident|string>` — module directive. The bridge links exactly one
+    ; file, so the directive binds nothing (real modules are Beta); the shape
+    ; is validated and the operand consumed. rbx = pull token.
+    mov rax, rcx
+    inc rax
+    cmp rax, [token_count]
+    jge .err_shape
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 2               ; module name ident?
+    je .pull_ok
+    cmp byte [r12], 6               ; ...or quoted name?
+    jne .err_shape
+.pull_ok:
     add rcx, 1
     jmp .next_token
 .check_expose_stmt:
+    ; `expose <ident>` — publishes a name from this file. The operand must be
+    ; a declared symbol (task or variable); the bridge records nothing beyond
+    ; the check (single-file link unit). rbx = expose token.
+    mov rax, rcx
+    inc rax
+    cmp rax, [token_count]
+    jge .err_shape
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 2               ; name ident?
+    jne .err_shape
+    mov rdi, [r12 + 8]
+    call find_symbol_scoped         ; cur_owner live; preserves rbx/rcx
+    cmp rax, 1
+    jne .err_undeclared
     add rcx, 1
     jmp .next_token
 .check_state_stmt:
@@ -1880,8 +2132,15 @@ run_parser:
     jmp .next_token
 
 .check_var_decl:
-    xor r10, r10                    
-    mov r11b, r9b                   
+    ; Inside an open mold body, lock/flux lines are layout fields, not runtime
+    ; symbols (the brace guard routes only lock/flux here when braced).
+    cmp qword [parse_brace_depth], 0
+    je .check_var_normal
+    cmp qword [mold_open], 0
+    jne .check_mold_field
+.check_var_normal:
+    xor r10, r10
+    mov r11b, r9b
     mov rax, rcx
     inc rax
     cmp rax, [token_count]
@@ -2553,6 +2812,13 @@ run_parser:
     mov rax, 60
     mov rdi, 1
     syscall
+
+.parse_eof_check:
+    cmp qword [token_count], 0
+    je .parse_success                ; empty input: downstream fails loudly
+    cmp qword [parse_brace_depth], 0
+    jne .err_shape                   ; unterminated '{' (e.g. unclosed mold)
+    jmp .parse_success
 
 .parse_success:
     mov rax, 1
@@ -4363,7 +4629,30 @@ run_codegen:
     jmp .text_skip
 
 .handle_mold:
-    add rcx, 2
+    ; `mold` blocks emit nothing (layout-only declaration, recorded by the
+    ; parser). Skip the balanced `{...}` body: rcx is the mold token.
+    mov r10, rcx
+    xor r8, r8                      ; brace depth
+.mold_skip:
+    inc r10
+    cmp r10, [token_count]
+    jge .text_skip                  ; parser guarantees balance; defensive
+    mov rax, r10
+    shl rax, 4
+    lea r13, [token_array + rax]
+    cmp byte [r13], 3
+    jne .mold_skip
+    cmp byte [r13 + 1], 19          ; '{'?
+    jne .mold_not_open
+    inc r8
+    jmp .mold_skip
+.mold_not_open:
+    cmp byte [r13 + 1], 20          ; '}'?
+    jne .mold_skip
+    dec r8
+    cmp r8, 0
+    jne .mold_skip
+    mov rcx, r10                   ; park on '}': skip completes the step
     jmp .text_skip
 .handle_forge:
     add rcx, 2
@@ -4445,9 +4734,12 @@ run_codegen:
     call write_to_file
     jmp .text_skip
 .handle_pull:
+    ; `pull <operand>`: validated by the parser; the single-file bridge emits
+    ; nothing. Consumes keyword + operand (add 1, skip completes +2).
     add rcx, 1
     jmp .text_skip
 .handle_expose:
+    ; `expose <name>`: validated by the parser (declared name); emits nothing.
     add rcx, 1
     jmp .text_skip
 .handle_state:
@@ -6185,6 +6477,28 @@ process_current_word:
     mov rcx, [word_len]
     add rdi, rcx
     mov byte [rdi], 0
+
+    ; bool literals: `true`/`false` are numeric 1/0 (Spec1 §2). The words are
+    ; reserved and never identifiers: rewrite the buffer so the shared numeric
+    ; path below stores them (all condition/init validation keys on type 5).
+    mov rdi, word_buffer
+    mov rdx, kw_true
+    call string_compare
+    cmp rax, 1
+    jne .not_bool_true
+    mov byte [word_buffer], '1'
+    mov byte [word_buffer + 1], 0
+    mov qword [word_len], 1
+.not_bool_true:
+    mov rdi, word_buffer
+    mov rdx, kw_false
+    call string_compare
+    cmp rax, 1
+    jne .not_bool_false
+    mov byte [word_buffer], '0'
+    mov byte [word_buffer + 1], 0
+    mov qword [word_len], 1
+.not_bool_false:
 
     call check_numeric
     cmp rax, 1
