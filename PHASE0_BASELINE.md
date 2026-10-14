@@ -62,16 +62,14 @@
  6. DONE Structural: owner clobber, capacity guards, stderr, atomic output, strict rejection.
  OPEN (docs/harness, not compiler): P2 probe aliasing fix (use separate buffer or i>=8);
  dharfuzz checksum channel documents byte width (mask `& 0xFF` or restrict 0..255).
- OPEN BUG (compiler, found 2026-10-14 on fix/phase-1.1-arg-integrity): same-name
- body locals across tasks collide — `add(a,b)+r` then `sub3(a,b,c)+r` puts sub3's
- `r` at `[rbp-24]`, clobbering param `c` (got 5, want 10; 4-task variant got 52,
- want 57). Distinct locals (r1..r4, tests/calls.dhar) PASS 57. Zero-param then
- 2-param sharing `r` passes; 3-param as 2nd+ task fails regardless of param names;
- order-reversed (3-param first) passes with a harmless +8 gap. Suspect add_symbol
- local_counts vs precompute scan_frame_off for 2nd+ task body locals (offsets from
- add_symbol kept because pf_mark_local skips non-zero; frame sizes correct, individual
- offsets wrong). Repro: /tmp/calls_same_name_repro.dhar (see fix-branch log).
- Fix requires frame/owner audit — NOT claimed fixed here.
+ FIXED 2026-10-14 on fix/phase-1.1-arg-integrity (merged here): same-name body
+ locals across tasks collided because add_symbol zeroed qword at [rbx+16], wiping
+ the owner at [rbx+20] (bytes 20..23) — every symbol became owner=0 so
+ find_symbol_scoped matched the first same-named symbol in any task (sub3 r reused
+ add r at [rbp-24]; got 5 want 10; 4-task got 52 want 57). One-line fix:
+ `mov dword [rbx+16],0` (commit 989c981, gdb-verified owners 1/2/3, offsets
+ sequential). tests/calls.dhar now uses the shared name r (stronger) and PASSES 57;
+ min repros A[0p,3p]=12 B[1p,3p]=47 C[3p,3p]=11 all PASS.
  Parked, out of Strict Alpha scope: Phase 1.6.3 mold-layout WIP (stashed, breaks build —
  src/asm/ split + src/lexer/ empty dir also unbuilt/untracked, production is src/lexer.asm alone).
 
