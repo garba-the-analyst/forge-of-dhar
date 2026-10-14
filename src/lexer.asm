@@ -103,6 +103,8 @@ section .data
     len_err_syntax equ $ - msg_err_syntax
     msg_err_cond db "Syntax Error: Invalid comparison operator in condition on line ", 0
     len_err_cond equ $ - msg_err_cond
+    msg_err_cond_rhs db "Syntax Error: condition compares an identifier against a number or variable only (StageAlpha 2.2) on line ", 0
+    len_err_cond_rhs equ $ - msg_err_cond_rhs
     ; Phase 1.5: subset diagnostics (StageAlpha §2.2 / §4.3)
     msg_err_subset db "Syntax Error: construct not in Stage-0 bootstrap subset (StageAlpha 2.2) on line ", 0
     len_err_subset equ $ - msg_err_subset
@@ -1314,6 +1316,14 @@ run_parser:
     add rax, 3
     cmp rax, [token_count]
     jge .err_bad_condition
+    ; Same RHS rule as when/span: identifier or number only (see .cond_op_valid).
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 2
+    je .shift_rhs_ok
+    cmp byte [r12], 5
+    jne .err_cond_rhs
+.shift_rhs_ok:
     mov rax, rcx
     add rax, 4
     cmp rax, [token_count]
@@ -1570,6 +1580,16 @@ run_parser:
     add rax, 3                      ; RHS value must exist
     cmp rax, [token_count]
     jge .err_bad_condition
+    ; Stage 0 conditions compare identifier vs number/variable only: a string
+    ; (or any other) RHS used to fall through and miscompile as
+    ; `cmp rax, "lit"` (NASM expression error). Reject with a diagnostic.
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 2               ; RHS identifier?
+    je .cond_rhs_ok
+    cmp byte [r12], 5               ; RHS number?
+    jne .err_cond_rhs
+.cond_rhs_ok:
     ; Phase 1.6: trailing ':' required (Spec1 2.5: ':' opens the block)
     mov rax, rcx
     add rax, 4
@@ -2387,6 +2407,10 @@ run_parser:
 .err_bad_condition:
     mov rsi, msg_err_cond
     mov rdx, len_err_cond
+    jmp .print_syntax_err
+.err_cond_rhs:
+    mov rsi, msg_err_cond_rhs
+    mov rdx, len_err_cond_rhs
     jmp .print_syntax_err
 .err_expected_identifier:
     mov rsi, msg_err_task
