@@ -51,6 +51,9 @@ section .data
     ; (todo diagnostic) instead of vanishing as identifiers
     kw_escape db "escape", 0
     kw_skip db "skip", 0
+    ; Phase 1.6.2: contextual 'in' for scan (soft keyword: compared by
+    ; content, never reserved, so user identifiers are unaffected)
+    kw_in_soft db "in", 0
     kw_i8 db "i8", 0
     kw_i16 db "i16", 0
     kw_i64 db "i64", 0
@@ -352,6 +355,17 @@ section .data
     len_asm_mov_rdi_one equ $ - asm_mov_rdi_one
     asm_mov_rsi_trap db "    mov rsi, dhar$trap$msg", 10
     len_asm_mov_rsi_trap equ $ - asm_mov_rsi_trap
+    ; --- Phase 1.6.2: scan-loop emission pieces (counter lives in frame) ---
+    asm_mov_rbp_open db "    mov qword [rbp-"
+    len_asm_mov_rbp_open equ $ - asm_mov_rbp_open
+    asm_close_zero db "], 0", 10
+    len_asm_close_zero equ $ - asm_close_zero
+    asm_cmp_rbp_open db "    cmp qword [rbp-"
+    len_asm_cmp_rbp_open equ $ - asm_cmp_rbp_open
+    asm_mov_rax_rbp db "    mov rax, qword [rbp-"
+    len_asm_mov_rax_rbp equ $ - asm_mov_rax_rbp
+    asm_inc_rbp db "    inc qword [rbp-"
+    len_asm_inc_rbp equ $ - asm_inc_rbp
 
     newline db 10
 
@@ -385,6 +399,8 @@ section .bss
     scan_task_id resq 1
     scan_frame_off resq 1
     cg_cur_task resq 1              ; codegen current task ordinal
+    cg_scan_idx resq 1              ; Phase 1.6.2: scans emitted in current task
+    scan_ctr_total resq 256         ; Phase 1.6.2: counter slots per task
     ecs_callee_tok resq 1           ; V0.3.0 callee token ptr during call emission
     cg_ret_label resq 1             ; label id of current task's epilogue
     in_task_flag resb 1
@@ -1019,10 +1035,10 @@ run_parser:
     je .check_gen_stmt
     cmp r9b, 12                     ; shift: else-if chain link
     je .check_shift_stmt
-    cmp r9b, 13                     ; scan: not in subset
-    je .err_subset
-    cmp r9b, 14                     ; cycle: subset, Phase 1.6
-    je .err_todo
+    cmp r9b, 13                     ; scan: value-iteration loop
+    je .check_scan_stmt
+    cmp r9b, 14                     ; cycle: infinite loop
+    je .check_cycle_stmt
     cmp r9b, 15                     ; mold: subset (layout), Phase 1.6
     je .err_todo
     cmp r9b, 16                     ; forge: not in subset
@@ -1041,10 +1057,10 @@ run_parser:
     je .err_subset
     cmp r9b, 23                     ; enforce: not in subset
     je .err_subset
-    cmp r9b, 26                     ; escape: subset, Phase 1.6
-    je .err_todo
-    cmp r9b, 27                     ; skip: subset, Phase 1.6
-    je .err_todo
+    cmp r9b, 26                     ; escape: break nearest loop
+    je .check_escape_stmt
+    cmp r9b, 27                     ; skip: continue nearest loop
+    je .check_escape_stmt           ; (same validation as escape)
     jmp .next_token
 
 .check_peek_stmt:
@@ -1330,9 +1346,144 @@ run_parser:
     add rcx, 4
     jmp .next_token
 .check_scan_stmt:
-    add rcx, 3
+    ; Phase 1.6.2: scan x in buf ':' — value-iteration over a raw buffer.
+    ; rbx = scan token. Declares x (fresh flux i32) in the current scope.
+    mov r14d, [rbx + 4]             ; line for semantic diagnostics
+    mov rax, rcx
+    inc rax
+    cmp rax, [token_count]
+    jge .err_shape
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 2               ; x identifier?
+    jne .err_shape
+    mov r13, [r12 + 8]
+    call check_symbol_collision_scoped
+    cmp rax, 1
+    je .err_redeclared              ; Dhar has no shadowing
+    mov rax, rcx
+    add rax, 2
+    cmp rax, [token_count]
+    jge .err_shape
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 2               ; contextual 'in'?
+    jne .err_shape
+    push rbx
+    push rcx
+    push r12
+    mov rdi, [r12 + 8]
+    mov rdx, kw_in_soft
+    call string_compare
+    cmp rax, 1
+    pop r12
+    pop rcx
+    pop rbx
+    jne .err_shape
+    mov rax, rcx
+    add rax, 3
+    cmp rax, [token_count]
+    jge .err_shape
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 2               ; buf identifier?
+    jne .err_shape
+    push r12
+    mov rdi, [r12 + 8]
+    call find_symbol_scoped
+    pop r12
+    cmp rax, 1
+    jne .err_undeclared
+    mov al, [rdx + 9]
+    and al, 0x7F
+    cmp al, 3                       ; buf must be raw (bound comes from it)
+    jne .err_index
+    mov rax, rcx
+    add rax, 4
+    cmp rax, [token_count]
+    jge .err_shape
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 3
+    jne .err_shape
+    cmp byte [r12 + 1], 1           ; ':'?
+    jne .err_shape
+    mov rax, rcx
+    add rax, 5
+    cmp rax, [token_count]
+    jge .err_shape
+    shl rax, 4
+    lea r12, [token_array + rax]
+    mov dx, [rbx + 2]
+    cmp dx, [r12 + 2]               ; non-empty body?
+    jge .err_shape
+    ; register x as a flux i32 local in this scope
+    mov rax, rcx
+    inc rax
+    shl rax, 4
+    lea r12, [token_array + rax]
+    mov r13, [r12 + 8]              ; x name
+    mov r8b, 2                      ; flux
+    mov r9b, 1                      ; i32
+    xor r10, r10                    ; scalar
+    mov r14d, [rbx + 4]             ; (re-set: helpers may use r14d)
+    mov r15w, [rbx + 2]
+    call add_symbol
+    ; block-stack: pop closed siblings, push the scan link
+    mov dx, [rbx + 2]
+    call parse_cf_pop_ge
+    mov r11b, 7
+    call parse_cf_push
+    add rcx, 4
     jmp .next_token
 .check_cycle_stmt:
+    ; Phase 1.6.2: cycle ':' — infinite loop, exits only via escape.
+    mov rax, rcx
+    inc rax
+    cmp rax, [token_count]
+    jge .err_shape
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 3
+    jne .err_shape
+    cmp byte [r12 + 1], 1           ; ':'?
+    jne .err_shape
+    mov rax, rcx
+    add rax, 2
+    cmp rax, [token_count]
+    jge .err_shape
+    shl rax, 4
+    lea r12, [token_array + rax]
+    mov dx, [rbx + 2]
+    cmp dx, [r12 + 2]               ; non-empty body (else hangs forever)
+    jge .err_shape
+    mov dx, [rbx + 2]
+    call parse_cf_pop_ge
+    mov r11b, 6
+    call parse_cf_push
+    add rcx, 1
+    jmp .next_token
+.check_escape_stmt:
+    ; Phase 1.6.2: escape/skip need a strictly enclosing loop. The stack
+    ; is only peeked (no mutation): nearest loop frame below this line wins.
+    mov dx, [rbx + 2]
+    mov rax, [parse_cf_depth]
+.esc_scan:
+    test rax, rax
+    jz .err_orphan
+    dec rax
+    mov r10b, [parse_cf_kind + rax]
+    cmp r10b, 2
+    je .esc_found
+    cmp r10b, 6
+    je .esc_found
+    cmp r10b, 7
+    je .esc_found
+    jmp .esc_scan
+.esc_found:
+    movzx r10d, word [parse_cf_indent + rax*2]
+    cmp r10w, dx
+    jae .err_orphan                 ; loop must strictly contain this line
     jmp .next_token
 .check_mold_stmt:
     add rcx, 2
@@ -2732,6 +2883,19 @@ run_codegen:
     je .nc_shift
     jmp .nc_end_common              ; kind 3 (consumed): end (+chain) below
 .loop_close:
+    ; Phase 1.6.2: scan links (kind 7) keep their counter in the frame
+    ; slot recorded at +24; increment it before looping back.
+    cmp r13, 7
+    jne .loop_no_inc
+    mov rsi, asm_inc_rbp
+    mov rdx, len_asm_inc_rbp
+    call write_to_file
+    mov rax, [r12 + 24]
+    call write_rax_to_file
+    mov rsi, asm_close_bracket_nl
+    mov rdx, len_asm_close_bracket_nl
+    call write_to_file
+.loop_no_inc:
     call emit_jmp_start
     jmp .nc_end_common
 .nc_when:
@@ -2741,8 +2905,14 @@ run_codegen:
     call emit_fallback_label        ; dummy F_new (unreferenced)
 .nc_end_common:
     call emit_end_label             ; END_self (rdi = self id, still live)
-    ; chain end: a shift link (kind 5, or consumed kind 3 from one) also
-    ; closes the ultimate chain end unless it is its own (whens/spans)
+    ; chain end: only shift links (kind 5) and consumed frames from them
+    ; (kind 3) consult +24 as a chain id. Whens/spans/loops keep their own
+    ; id there (scan keeps its counter slot) and end once.
+    cmp r13, 5
+    je .nc_chain_check
+    cmp r13, 3
+    jne .nc_chain_done
+.nc_chain_check:
     mov rax, [r12 + 24]
     test rax, rax
     jz .nc_chain_done
@@ -2818,8 +2988,234 @@ run_codegen:
     je .handle_enforce
     cmp byte [rbx + 1], 25          ; gen
     je .handle_gen
+    cmp byte [rbx + 1], 13          ; Phase 1.6.2: scan
+    je .handle_scan
+    cmp byte [rbx + 1], 14          ; Phase 1.6.2: cycle
+    je .handle_cycle
+    cmp byte [rbx + 1], 26          ; Phase 1.6.2: escape
+    je .handle_escape
+    cmp byte [rbx + 1], 27          ; Phase 1.6.2: skip
+    je .handle_escape               ; (same nearest-loop scan)
     jmp .text_skip
 
+.handle_cycle:
+    ; Phase 1.6.2: cycle ':' — infinite loop (parser: shape + body checked).
+    ; Exits only via escape (which jumps the frame's END label).
+    mov rdi, [label_id_counter]
+    inc qword [label_id_counter]
+    mov r14, [cf_sp]
+    cmp r14, 2048
+    jae fatal_full
+    shl r14, 5
+    lea r11, [cf_stack + r14]
+    mov [r11], rdi
+    mov dx, [rbx + 2]
+    mov [r11 + 8], dx
+    mov qword [r11 + 16], 6
+    mov [r11 + 24], rdi             ; chain end starts as self
+    inc qword [cf_sp]
+    push rdi
+    call emit_start_label           ; .L_START_id:
+    pop rdi
+    add rcx, 1                      ; consume 'cycle' (':' skipped by loop)
+    jmp .text_skip
+.handle_scan:
+    ; Phase 1.6.2: scan x in buf ':' — x takes each byte value in order.
+    ; Tokens from rcx: 0 scan, 1 x, 2 in, 3 buf, 4 ':'. Parser validated.
+    ; Counter slot OFF = frame_bytes - 8*(j+1), j = this task's scan index
+    ; (slots sit below the regulars; frame covers them by construction).
+    mov rax, [cg_scan_idx]
+    inc qword [cg_scan_idx]
+    mov r10, rax                    ; j (survives: untouched below)
+    mov rax, rcx
+    add rax, 3
+    shl rax, 4
+    lea r12, [token_array + rax]
+    mov rdi, [r12 + 8]
+    call find_symbol_scoped         ; rax?/rdx = buf sym (parser guarantees)
+    mov r13, 8                      ; default N = 8 (bare raw)
+    xor r9b, r9b                    ; 0 = global addr, 1 = local lea
+    cmp rax, 1
+    jne .scan_have_n
+    mov rsi, [rdx + 24]
+    test rsi, rsi
+    jz .scan_n_set
+    mov rdi, rsi
+    call parse_uint                 ; rax = N (preserves rdx)
+    mov r13, rax
+.scan_n_set:
+    test byte [rdx + 9], 0x80
+    jz .scan_have_n
+    mov r9b, 1
+    mov r8, [rdx + 16]              ; buf frame offset for lea
+.scan_have_n:
+    ; OFF = 8 * (slot count + j + 1): counters sit above the regulars.
+    ; local_counts counts slots (arrays take ceil(N/8)) since Phase 1.6.2.
+    mov rax, [cg_cur_task]
+    mov rdx, [local_counts + rax*8 - 8]
+    add rdx, r10
+    inc rdx
+    shl rdx, 3
+    mov r10, rdx                    ; OFF kept in r10
+    ; push the scan frame (fresh id, cur indent, kind 7, +24 = OFF)
+    mov rdi, [label_id_counter]
+    inc qword [label_id_counter]
+    mov r14, [cf_sp]
+    cmp r14, 2048
+    jae fatal_full
+    shl r14, 5
+    lea r11, [cf_stack + r14]
+    mov [r11], rdi
+    mov dx, [rbx + 2]
+    mov [r11 + 8], dx
+    mov qword [r11 + 16], 7
+    mov [r11 + 24], r10
+    inc qword [cf_sp]
+    push rdi                        ; id saved for START/END labels
+    ; counter init: mov qword [rbp-OFF], 0
+    mov rsi, asm_mov_rbp_open
+    mov rdx, len_asm_mov_rbp_open
+    call write_to_file
+    mov rax, r10
+    call write_rax_to_file
+    mov rsi, asm_close_zero
+    mov rdx, len_asm_close_zero
+    call write_to_file
+    ; .L_START_id:
+    mov rdi, [rsp]
+    call emit_start_label
+    ; cmp qword [rbp-OFF], N
+    mov rsi, asm_cmp_rbp_open
+    mov rdx, len_asm_cmp_rbp_open
+    call write_to_file
+    mov rax, r10
+    call write_rax_to_file
+    mov rsi, asm_mov2                ; "], "
+    mov rdx, len_asm_mov2
+    call write_to_file
+    mov rax, r13
+    call write_rax_to_file
+    mov rsi, newline
+    mov rdx, 1
+    call write_to_file
+    ; jge .L_END_id
+    mov rdi, [rsp]
+    mov rsi, asm_jge_l_end
+    mov rdx, len_asm_jge_l_end
+    call write_to_file
+    mov rax, rdi
+    call write_rax_to_file
+    mov rsi, newline
+    mov rdx, 1
+    call write_to_file
+    ; x = peek(buf, counter): mov rax, [rbp-OFF]
+    mov rsi, asm_mov_rax_rbp
+    mov rdx, len_asm_mov_rax_rbp
+    call write_to_file
+    mov rax, r10
+    call write_rax_to_file
+    mov rsi, asm_close_bracket_nl
+    mov rdx, len_asm_close_bracket_nl
+    call write_to_file
+    ; rsi = buf address
+    cmp r9b, 1
+    je .scan_buf_local
+    mov rsi, asm_mov_rsi_lit
+    mov rdx, len_asm_mov_rsi_lit
+    call write_to_file
+    mov rax, rcx
+    add rax, 3
+    shl rax, 4
+    lea r12, [token_array + rax]
+    mov rdi, [r12 + 8]
+    call emit_mangled_name           ; global addr (mangled)
+    mov rsi, newline
+    mov rdx, 1
+    call write_to_file
+    jmp .scan_peek_emit
+.scan_buf_local:
+    mov rsi, asm_lea_rsi_open
+    mov rdx, len_asm_lea_rsi_open
+    call write_to_file
+    mov rsi, asm_rbp_prefix
+    mov rdx, len_asm_rbp_prefix
+    call write_to_file
+    mov rax, r8
+    call write_rax_to_file
+    mov rsi, asm_close_bracket_nl
+    mov rdx, len_asm_close_bracket_nl
+    call write_to_file
+.scan_peek_emit:
+    ; xor rcx,rcx; mov cl,[rsi+rax]; mov [x],rcx (peek strings)
+    mov rsi, asm_peek_3
+    mov rdx, len_asm_peek_3
+    call write_to_file
+    mov rax, rcx
+    inc rax                          ; x token at rcx+1
+    shl rax, 4
+    lea r12, [token_array + rax]
+    mov rdi, [r12 + 8]
+    call emit_named_operand          ; x slot (slotted by precompute)
+    mov rsi, asm_peek_4
+    mov rdx, len_asm_peek_4
+    call write_to_file
+    pop rdi                          ; balance id save (END label at close)
+    add rcx, 4
+    jmp .text_skip
+.handle_shift:
+    ; Defensive only: every valid shift is intercepted in .check_cf_close
+    ; (parser validates the chain, so this is unreachable). Skip one token.
+    jmp .text_skip
+.handle_escape:
+    ; Phase 1.6.2: escape/skip jump to the nearest enclosing loop's END /
+    ; START (kinds 2/6/7 strictly above this line). Parser validated context.
+    mov dx, [rbx + 2]               ; current indent
+    mov r14, [cf_sp]
+    cmp byte [rbx + 1], 26          ; escape (break) vs skip (continue)?
+    je .esc_is_escape
+.sk_loop:
+    test r14, r14
+    jz .esc_done                    ; unreachable: parser-gated
+    dec r14
+    mov rax, r14
+    shl rax, 5
+    lea r11, [cf_stack + rax]
+    movzx eax, word [r11 + 8]
+    cmp ax, dx
+    jae .sk_loop                    ; loop must strictly contain this line
+    mov r13, [r11 + 16]
+    cmp r13, 2
+    je .sk_fire
+    cmp r13, 6
+    je .sk_fire
+    cmp r13, 7
+    jne .sk_loop
+.sk_fire:
+    mov rdi, [r11]
+    call emit_jmp_start
+    jmp .esc_done
+.esc_is_escape:
+    test r14, r14
+    jz .esc_done
+    dec r14
+    mov rax, r14
+    shl rax, 5
+    lea r11, [cf_stack + rax]
+    movzx eax, word [r11 + 8]
+    cmp ax, dx
+    jae .esc_is_escape
+    mov r13, [r11 + 16]
+    cmp r13, 2
+    je .esc_fire
+    cmp r13, 6
+    je .esc_fire
+    cmp r13, 7
+    jne .esc_is_escape
+.esc_fire:
+    mov rdi, [r11]
+    call emit_jmp_end
+.esc_done:
+    jmp .text_skip
 .handle_poke:
     ; poke buf, idx, val : buf@+1, idx@+3, val@+5
     ; load index into rax
@@ -3161,6 +3557,7 @@ run_codegen:
     mov rax, [cg_cur_task]
     mov [cg_ret_label], rax
     mov [cur_owner], rax              ; sync cur_owner with cg_cur_task for scoped lookups
+    mov qword [cg_scan_idx], 0        ; Phase 1.6.2: per-task scan counter
     mov r10, rax                      ; save task ordinal
     mov byte [in_task_flag], 1
     push rcx                        ; SAVE token index (rcx is the parse cursor!)
@@ -3170,7 +3567,8 @@ run_codegen:
     mov rax, [frame_offsets + r10*8 - 8]  ; frame size for THIS ordinal
     test rax, rax
     jnz .prologue_got_frame
-    mov rax, [local_counts + r10*8 - 8]   ; fallback: local count * 8
+    mov rax, [local_counts + r10*8 - 8]   ; fallback: slot count * 8
+    add rax, [scan_ctr_total + r10*8 - 8] ; Phase 1.6.2: + scan counters
     shl rax, 3
     add rax, 15
     and rax, -16
@@ -3854,14 +4252,6 @@ run_codegen:
     call write_to_file
     jmp .text_skip
 
-.handle_shift:
-    add rcx, 3
-    jmp .text_skip
-.handle_scan:
-    add rcx, 3
-    jmp .text_skip
-.handle_cycle:
-    jmp .text_skip
 .handle_mold:
     add rcx, 2
     jmp .text_skip
@@ -4680,6 +5070,18 @@ run_codegen:
     call emit_task_epilogue
     jmp .empty_do_cleanup
 .empty_loop:
+    ; Phase 1.6.2: scan links increment their counter slot (+24) first.
+    cmp r13, 7
+    jne .empty_no_inc
+    mov rsi, asm_inc_rbp
+    mov rdx, len_asm_inc_rbp
+    call write_to_file
+    mov rax, [r12 + 24]
+    call write_rax_to_file
+    mov rsi, asm_close_bracket_nl
+    mov rdx, len_asm_close_bracket_nl
+    call write_to_file
+.empty_no_inc:
     call emit_jmp_start
     jmp .empty_end_common
 .empty_when:
@@ -4689,6 +5091,11 @@ run_codegen:
     call emit_fallback_label        ; dummy F_new (unreferenced)
 .empty_end_common:
     call emit_end_label             ; END_self
+    cmp r13, 5                      ; Phase 1.6.2: +24 is a chain id only
+    je .empty_chain_check           ; for shift links (and consumed ones);
+    cmp r13, 3                      ; scans keep a counter slot there
+    jne .empty_chain_done
+.empty_chain_check:
     mov rax, [r12 + 24]             ; Phase 1.6: chain end unless own
     test rax, rax
     jz .empty_chain_done
@@ -4956,6 +5363,8 @@ precompute_frames:
     je .pf_alloc_local
     cmp byte [rbx + 1], 2           ; flux
     je .pf_alloc_local
+    cmp byte [rbx + 1], 13          ; Phase 1.6.2: scan slots its bound var
+    je .pf_alloc_scan
     jmp .pf_next
 
 .pf_exit_task:
@@ -4972,6 +5381,20 @@ precompute_frames:
     lea rdi, [token_array + rax]
     mov rdi, [rdi + 8]
     call pf_mark_local
+    jmp .pf_next
+.pf_alloc_scan:
+    ; Phase 1.6.2: slot the scan bound var (token after scan) and count
+    ; one hidden counter slot for this task's scan.
+    mov rax, rcx
+    inc rax
+    cmp rax, [token_count]
+    jge .pf_next
+    shl rax, 4
+    lea rdi, [token_array + rax]
+    mov rdi, [rdi + 8]
+    call pf_mark_local
+    mov rax, [scan_task_id]
+    inc qword [scan_ctr_total + rax*8 - 8]
 .pf_next:
     inc rcx
     jmp .pf_loop
@@ -5006,22 +5429,7 @@ pf_mark_local:
     cmp dword [rdx + 16], 0
     jne .pml_exit
     or byte [rdx + 9], 0x80         ; local flag = subtype bit7
-    ; Phase 1.5a: raw[N] locals reserve ceil(N/8) slots so in-range indices
-    ; land inside the frame (scalars and params keep one 8-byte slot)
-    mov rax, 1                      ; default one slot
-    cmp byte [rdx + 8], 5           ; parameters keep one slot (raw-param ABI TBD)
-    je .pml_have_slots
-    mov rdi, [rdx + 24]             ; array size text (0 for scalars)
-    test rdi, rdi
-    jz .pml_have_slots
-    call parse_uint                 ; rax = N (preserves rdi/rdx)
-    add rax, 7
-    shr rax, 3                      ; slots = ceil(N/8)
-    test rax, rax
-    jnz .pml_have_slots
-    mov rax, 1                      ; degenerate raw[0]: one slot floor
-.pml_have_slots:
-    add [scan_frame_off], rax
+    inc qword [scan_frame_off]
     mov rax, [scan_frame_off]
     shl rax, 3                      ; bytes used so far
     mov [rdx + 16], eax             ; positive distance below rbp (32-bit)
@@ -5608,9 +6016,34 @@ add_symbol:
     cmp byte [rbx + 9], 0           ; task declaration (subtype=0)?
     je .as_no_local
     or byte [rbx + 9], 0x80         ; mark as local (stack-allocated)
-    inc qword [local_counts + rax*8 - 8] ; increment local count for this task (1-indexed)
-    mov r10, [local_counts + rax*8 - 8] ; get current local count
-    shl r10, 3                      ; offset = count * 8
+    ; Phase 1.6.2: raw[N] locals (not params) reserve ceil(N/8) slots so
+    ; in-range indices land inside the frame. local_counts counts SLOTS;
+    ; the variable's own offset is the end of its reservation.
+    ; NOTE: rdi is caller-owned here (declaration length, used by the
+    ; caller after we return), so it is saved/restored around our use.
+    mov r10, 1
+    cmp byte [rbx + 8], 5           ; parameters keep one slot (raw-param ABI TBD)
+    je .as_add_slots
+    push rdi                        ; save decl length
+    mov rdi, [rbx + 24]             ; array size text (0 for scalars)
+    test rdi, rdi
+    jz .as_rdi_out
+    push rax                        ; task ordinal (parse_uint returns in rax)
+    call parse_uint                 ; rax = N (preserves rbx/rdi/rdx)
+    mov r10, rax
+    pop rax
+    add r10, 7
+    shr r10, 3                      ; slots = ceil(N/8)
+    test r10, r10
+    jnz .as_rdi_out
+    mov r10, 1                      ; degenerate raw[0]: one slot floor
+.as_rdi_out:
+    pop rdi                         ; restore decl length
+    jmp .as_add_slots
+.as_add_slots:
+    add [local_counts + rax*8 - 8], r10
+    mov r10, [local_counts + rax*8 - 8] ; get current slot count
+    shl r10, 3                      ; offset = slots * 8
     mov [rbx + 16], r10d            ; assign stack offset
 .as_no_local:
     

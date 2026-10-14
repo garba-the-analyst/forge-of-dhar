@@ -1,0 +1,34 @@
+flux out: raw[8]
+
+task core():
+    flux z: i32 = 0
+    flux i: i32 = 0
+    ; cycle + escape: count to 5 (prints 5)
+    cycle:
+        i = i + 1
+        when i == 5:
+            escape
+    out[z] = i
+    sys 1, 1, out, 1
+    ; span + skip: sum 0..5 skipping 3 (prints 12)
+    flux k: i32 = 0
+    flux s: i32 = 0
+    span k < 6:
+        when k == 3:
+            k = k + 1
+            skip
+        s = s + k
+        k = k + 1
+    out[z] = s
+    sys 1, 1, out, 1
+    ; scan values of lb = [4,1,0,0] (prints 5)
+    flux lb: raw[4]
+    flux one: i32 = 1
+    flux four: i32 = 4
+    lb[z] = four
+    lb[one] = one
+    flux u: i32 = 0
+    scan y in lb:
+        u = u + y
+    out[z] = u
+    sys 1, 1, out, 1

@@ -249,6 +249,37 @@ span iter \< 3:
     sys 1, 1, loop\_msg, 23  
     iter \= iter \+ 1
 ```
+
+#### **C. cycle Infinite Loops with escape**
+
+> * cycle: Infinite loop with no condition (Spec1 §8.2). Exits only via `escape`, which jumps to the end of the nearest enclosing loop. A `cycle:` with an empty body is a compile-time error (it could never terminate).
+```
+Code snippet  
+flux iter: i32 \= 0
+
+cycle:  
+    iter \= iter \+ 1  
+    when iter \== 5:  
+        escape
+```
+
+#### **D. scan Value Loops**
+
+> * scan x in buf:: Iterates over each byte of a `raw` buffer, declaring `x` (a fresh `flux i32` in the current scope) bound to each value in order. The buffer must be declared `raw`; bounds come from its declared size. `in` is contextual (compared by content, never reserved).
+```
+Code snippet  
+flux lb: raw\[4\]  
+flux total: i32 \= 0
+
+scan byte\_val in lb:  
+    total \= total \+ byte\_val
+```
+
+#### **E. escape and skip**
+
+> * escape: Breaks out of the nearest enclosing loop (`span`, `cycle`, or `scan`), continuing after it.  
+> * skip: Skips to the next iteration of the nearest enclosing loop (re-checks the condition for `span`/`scan`).  
+> * Both are compile-time errors outside a loop body. See `tests/loops.dhar` (cycle \= 5, span-skip sum \= 12, scan sum \= 5).
 ### **7\. Kernel Interfacing & System Calls**
 
 Dhar interacts directly with the host kernel via the sys keyword, mapping sequentially to host registers.
