@@ -62,13 +62,12 @@
  6. DONE Structural: owner clobber, capacity guards, stderr, atomic output, strict rejection.
  OPEN (docs/harness, not compiler): P2 probe aliasing fix (use separate buffer or i>=8);
  dharfuzz checksum channel documents byte width (mask `& 0xFF` or restrict 0..255).
- OPEN (compiler acceptance hole, found 2026-10-14 during Honing audit): string
- conditions (`when word == "task":`, ident vs string literal) are ACCEPTED by the
- parser but miscompiled to `cmp rax, "task"` (NASM `expression syntax error`,
- loud asm_error, never silent wrong code). Per Strict Alpha §2.2 exclusion rule
- they should REJECT with a diagnostic. dharfuzz never generates string conditions
- (six relationals over scalars only), so the gate is unaffected; Honing src avoids
- the construct. Fix = validate condition operand types in run_parser (future work).
+ FIXED on fix/cond-rhs-validation (merged here): .check_cf_stmt/.check_shift_stmt
+ now require RHS type 2 (identifier) or 5 (number), else `.err_cond_rhs` with
+ `condition compares an identifier against a number or variable only
+ (StageAlpha 2.2)`, exit 1, no stale output.asm. Verified: when/shift/span
+ with string RHS all reject loudly; var-vs-var still passes (9); shipped 7/7
+ + probes hold; fuzz n=150 identical (963/1200, 237 truncation-only, 0 real).
  FIXED 2026-10-14 on fix/phase-1.1-arg-integrity (merged here): same-name body
  locals across tasks collided because add_symbol zeroed qword at [rbx+16], wiping
  the owner at [rbx+20] (bytes 20..23) — every symbol became owner=0 so
