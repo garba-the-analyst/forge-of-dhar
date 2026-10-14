@@ -219,6 +219,7 @@ Dhar replaces standard if/else and while keywords with deterministic execution r
 #### **A. when and fallback Conditional Blocks**
 
 > * when: Evaluates a comparison check. Supported operators: \== (equal), \!= (not equal), \< (less than), \> (greater than), \<= (less or equal), \>= (greater or equal). If true, execution continues into the indented block. If false, it jumps directly to .L\_FALLBACK\_ or .L\_END\_.  
+> * shift: Else-if link (Spec1 §8.1, may repeat). Evaluated only if all previous links failed; exactly one branch of the chain runs. A `shift` without a matching `when`/`shift` at the same indent is a compile-time error, as is a second `fallback:`.  
 > * fallback: Executes if the preceding when check fails.
 ```
 Code snippet  
@@ -227,11 +228,14 @@ flux system\_state: i32 \= 1
 when system\_state \== 1:  
     lock ok\_msg: str \= "System state nominal.\\n"  
     sys 1, 1, ok\_msg, 22  
+shift system\_state \== 2:  
+    lock warn\_msg: str \= "System state degraded.\\n"  
+    sys 1, 1, warn\_msg, 23  
 fallback:  
     lock err\_msg: str \= "System error detected.\\n"  
     sys 1, 1, err\_msg, 23
 ```
-Conditions compare an identifier against either an integer literal or another variable of the same type. Arithmetic expressions inside conditions (e.g., x + 1 \< 5) are not supported in V0; compute into a variable first.
+Conditions compare an identifier against either an integer literal or another variable of the same type. Arithmetic expressions inside conditions (e.g., x + 1 \< 5) are not supported in V0; compute into a variable first. A trailing `:` is required after every `when`/`shift` condition.
 
 #### **B. span Loop Blocks**
 

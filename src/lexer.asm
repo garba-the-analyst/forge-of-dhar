@@ -109,6 +109,8 @@ section .data
     len_err_index equ $ - msg_err_index
     msg_err_expr db "Syntax Error: expression unsupported here; compute into a variable first on line ", 0
     len_err_expr equ $ - msg_err_expr
+    msg_err_orphan db "Syntax Error: block keyword without matching opener on line ", 0
+    len_err_orphan equ $ - msg_err_orphan
     msg_err_shape db "Syntax Error: malformed statement shape on line ", 0
     len_err_shape equ $ - msg_err_shape
     msg_fatal_full db "Fatal Error: input exceeds compiler capacity (1MB source, 65536 tokens, 32768 symbols, 1MB strings)", 10, 0
@@ -390,6 +392,13 @@ section .bss
     mold_depth resq 1               ; track mold nesting depth
     parse_task_counter resq 1       ; V0.3.0 scoping: task ordinal at parse time
     cur_owner resq 1                ; V0.3.0 scoping: current declaration owner
+    ; --- Phase 1.6: parse-time block stack (orphan shift/fallback/escape
+    ;     detection) + brace depth (mold bodies gate control keywords)
+    parse_cf_indent resw 256        ; indent per depth (words)
+    parse_cf_kind resb 256          ; kind per depth (1 when,2 span,3 consumed,
+                                    ; 4 task,5 shift-link,6 cycle,7 scan)
+    parse_cf_depth resq 1           ; current depth
+    parse_brace_depth resq 1        ; { } nesting level
 
 section .text
     global _start
@@ -441,6 +450,8 @@ _start:
     mov qword [label_id_counter], 1
     mov byte [last_token_type], 0
     mov qword [cur_owner], 0
+    mov qword [parse_cf_depth], 0   ; Phase 1.6: block stack empty
+    mov qword [parse_brace_depth], 0 ; Phase 1.6: outside any { } body
 
     ; Phase 1.5b: remove any stale output so a failed compile can never
     ; leave a previous build/output.asm behind (unlink ignores errors)
@@ -887,6 +898,55 @@ fatal_full:
     mov rdi, 1
     syscall
 
+; Phase 1.6 parse-time block stack helpers. IN dx = indent (word).
+; parse_cf_push also takes r11b = kind. All registers preserved.
+parse_cf_push:
+    push rax
+    push rbx
+    mov rax, [parse_cf_depth]
+    cmp rax, 256
+    jae fatal_full
+    mov [parse_cf_indent + rax*2], dx
+    mov [parse_cf_kind + rax], r11b
+    inc qword [parse_cf_depth]
+    pop rbx
+    pop rax
+    ret
+parse_cf_pop_ge:                    ; pop while top.indent >= dx
+    push rax
+    push rbx
+.ppg_loop:
+    mov rax, [parse_cf_depth]
+    test rax, rax
+    jz .ppg_done
+    dec rax
+    movzx ebx, word [parse_cf_indent + rax*2]
+    cmp bx, dx
+    jb .ppg_done
+    dec qword [parse_cf_depth]
+    jmp .ppg_loop
+.ppg_done:
+    pop rbx
+    pop rax
+    ret
+parse_cf_pop_gt:                    ; pop while top.indent > dx
+    push rax
+    push rbx
+.ppg2_loop:
+    mov rax, [parse_cf_depth]
+    test rax, rax
+    jz .ppg2_done
+    dec rax
+    movzx ebx, word [parse_cf_indent + rax*2]
+    cmp bx, dx
+    jbe .ppg2_done
+    dec qword [parse_cf_depth]
+    jmp .ppg2_loop
+.ppg2_done:
+    pop rbx
+    pop rax
+    ret
+
 run_parser:
     mov rax, 1
     mov rdi, 1
@@ -907,9 +967,32 @@ run_parser:
     je .check_keyword
     cmp r8b, 2                      
     je .check_identifier
+    ; Phase 1.6: brace tracking for mold bodies (operators fall through here)
+    cmp r8b, 3
+    jne .next_token
+    cmp r9b, 19                     ; '{'
+    je .brace_open
+    cmp r9b, 20                     ; '}'
+    jne .next_token
+    cmp qword [parse_brace_depth], 0
+    je .err_shape                   ; unbalanced '}'
+    dec qword [parse_brace_depth]
+    jmp .next_token
+.brace_open:
+    inc qword [parse_brace_depth]
     jmp .next_token
 
 .check_keyword:
+    ; Phase 1.6: inside { } (mold bodies) only field declarations exist;
+    ; any other keyword there is invalid (fields are lock/flux lines only)
+    cmp qword [parse_brace_depth], 0
+    je .ck_nobrace
+    cmp r9b, 1
+    je .ck_nobrace
+    cmp r9b, 2
+    je .ck_nobrace
+    jmp .err_subset
+.ck_nobrace:
     cmp r9b, 1                      
     je .check_var_decl
     cmp r9b, 2                      
@@ -934,8 +1017,8 @@ run_parser:
     je .check_give_stmt
     cmp r9b, 25                     ; gen
     je .check_gen_stmt
-    cmp r9b, 12                     ; shift: subset, Phase 1.6
-    je .err_todo
+    cmp r9b, 12                     ; shift: else-if chain link
+    je .check_shift_stmt
     cmp r9b, 13                     ; scan: not in subset
     je .err_subset
     cmp r9b, 14                     ; cycle: subset, Phase 1.6
@@ -1183,7 +1266,68 @@ run_parser:
     add rcx, 3
     jmp .next_token
 .check_shift_stmt:
-    add rcx, 3
+    ; Phase 1.6: shift <ident> <cmp-op> <value> ':' — else-if, may repeat.
+    ; Same shape as when, plus chain validation: pop deeper blocks, then
+    ; the head at this indent must be an unconsumed when/shift link.
+    ; The head is replaced by the new shift link (codegen mirrors this).
+    mov rax, rcx
+    inc rax
+    cmp rax, [token_count]
+    jge .err_bad_condition
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 2               ; LHS identifier?
+    jne .err_bad_condition
+    mov rax, rcx
+    add rax, 2
+    cmp rax, [token_count]
+    jge .err_bad_condition
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 3
+    jne .err_bad_condition
+    mov r11b, [r12 + 1]
+    cmp r11b, 5
+    je .shift_op_valid
+    cmp r11b, 11
+    jb .err_bad_condition
+    cmp r11b, 15
+    ja .err_bad_condition
+.shift_op_valid:
+    mov rax, rcx
+    add rax, 3
+    cmp rax, [token_count]
+    jge .err_bad_condition
+    mov rax, rcx
+    add rax, 4
+    cmp rax, [token_count]
+    jge .err_bad_condition
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 3
+    jne .err_bad_condition
+    cmp byte [r12 + 1], 1           ; ':'?
+    jne .err_bad_condition
+    mov dx, [rbx + 2]
+    call parse_cf_pop_gt             ; pop deeper blocks only
+    mov rax, [parse_cf_depth]
+    test rax, rax
+    jz .err_orphan
+    dec rax
+    movzx r10d, word [parse_cf_indent + rax*2]
+    cmp r10w, dx
+    jne .err_orphan
+    mov r10b, [parse_cf_kind + rax]
+    cmp r10b, 1
+    je .shift_head_ok
+    cmp r10b, 5
+    jne .err_orphan
+.shift_head_ok:
+    dec qword [parse_cf_depth]       ; pop the head link
+    mov dx, [rbx + 2]
+    mov r11b, 5
+    call parse_cf_push               ; push the new shift link
+    add rcx, 4
     jmp .next_token
 .check_scan_stmt:
     add rcx, 3
@@ -1222,11 +1366,38 @@ run_parser:
     jmp .next_token
 
 .check_fallback_stmt:
-    add rcx, 1                      
+    ; Phase 1.6: fallback needs a when/shift head at the same indent.
+    ; The head is marked consumed (kind 3): a later shift/fallback here
+    ; is an orphan. The frame itself pops on dedent.
+    mov dx, [rbx + 2]
+    call parse_cf_pop_gt
+    mov rax, [parse_cf_depth]
+    test rax, rax
+    jz .err_orphan
+    dec rax
+    movzx r10d, word [parse_cf_indent + rax*2]
+    cmp r10w, dx
+    jne .err_orphan
+    mov r10b, [parse_cf_kind + rax]
+    cmp r10b, 1
+    je .fb_head_ok
+    cmp r10b, 5
+    jne .err_orphan
+.fb_head_ok:
+    mov byte [parse_cf_kind + rax], 3
+    add rcx, 1
     jmp .next_token
 .check_cf_stmt:
-    ; Condition grammar: [when|span] [identifier] [cmp-op] [value]
+    ; Condition grammar: [when|span] [identifier] [cmp-op] [value] ':'
     ; Valid operators: '=='(5), '<'(11), '>'(12), '<='(13), '>='(14), '!='(15)
+    mov rax, rcx
+    inc rax
+    cmp rax, [token_count]
+    jge .err_bad_condition
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 2               ; Phase 1.6: LHS must be an identifier
+    jne .err_bad_condition
     mov rax, rcx
     add rax, 2
     cmp rax, [token_count]
@@ -1248,6 +1419,39 @@ run_parser:
     add rax, 3                      ; RHS value must exist
     cmp rax, [token_count]
     jge .err_bad_condition
+    ; Phase 1.6: trailing ':' required (Spec1 2.5: ':' opens the block)
+    mov rax, rcx
+    add rax, 4
+    cmp rax, [token_count]
+    jge .err_bad_condition
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 3
+    jne .err_bad_condition
+    cmp byte [r12 + 1], 1           ; ':'?
+    jne .err_bad_condition
+    ; Phase 1.6: span needs a non-empty body (an empty loop hangs forever)
+    cmp r9b, 5                      ; span?
+    jne .cf_no_body_check
+    mov rax, rcx
+    add rax, 5
+    cmp rax, [token_count]
+    jge .err_bad_condition
+    shl rax, 4
+    lea r12, [token_array + rax]
+    mov dx, [rbx + 2]
+    cmp dx, [r12 + 2]               ; body indent deeper?
+    jge .err_bad_condition
+.cf_no_body_check:
+    ; Phase 1.6: block-stack tracking (pop closed siblings, push opener)
+    mov dx, [rbx + 2]
+    call parse_cf_pop_ge
+    mov r11b, 1                     ; when
+    cmp r9b, 4
+    je .cf_push_done
+    mov r11b, 2                     ; span
+.cf_push_done:
+    call parse_cf_push
     add rcx, 4
     jmp .next_token
 .check_sys_stmt:
@@ -1333,6 +1537,11 @@ run_parser:
     jmp .next_token
 
 .check_task_decl:
+    ; Phase 1.6: tasks open a block frame (pop closed siblings, push task)
+    mov dx, [rbx + 2]
+    call parse_cf_pop_ge
+    mov r11b, 4
+    call parse_cf_push
     mov rax, rcx
     inc rax                         
     cmp rax, [token_count]
@@ -2020,6 +2229,10 @@ run_parser:
     mov rsi, msg_err_shape
     mov rdx, len_err_shape
     jmp .print_syntax_err
+.err_orphan:
+    mov rsi, msg_err_orphan
+    mov rdx, len_err_orphan
+    jmp .print_syntax_err
 .err_bad_condition:
     mov rsi, msg_err_cond
     mov rdx, len_err_cond
@@ -2417,37 +2630,134 @@ run_codegen:
 
     cmp byte [rbx], 1
     jne .normal_close
-    cmp byte [rbx + 1], 7           
+    cmp byte [rbx + 1], 7
+    je .fb_kind_check
+    ; Phase 1.6: shift interception. A shift token chains onto the head
+    ; frame at its own indent (parser already validated the chain).
+    cmp byte [rbx + 1], 12          ; shift?
     jne .normal_close
-    cmp r13, 1                      
+    cmp dx, [r12 + 8]               ; head at this indent?
+    jne .normal_close               ; deeper head closes normally
+    cmp r13, 1
+    je .shift_chain
+    cmp r13, 5
+    je .shift_chain
+    jmp .normal_close               ; orphan shape: parser-gated, defensive
+.fb_kind_check:
+    cmp r13, 1
+    je .fb_consume
+    cmp r13, 5                      ; Phase 1.6: fallback also closes shifts
     jne .normal_close
+.fb_consume:
     cmp dx, [r12 + 8]               ; Phase 1.1 (P7): fallback binds only to the frame
     jne .normal_close               ; at its own indent; an outer fallback must not
                                     ; be consumed by an inner when (which dropped the
                                     ; outer jmp .L_END_ and fell into both branches)
-    call emit_jmp_end               
-    call emit_fallback_label        
-    mov qword [r12 + 16], 3         
-    add rcx, 1                      
-    jmp .text_skip                  
+    ; Phase 1.6: the then-block exits past the ULTIMATE chain end, not the
+    ; top link's own end (plain when/fallback: chain == self, same thing).
+    ; The fallback LABEL itself is always the top frame's.
+    mov rax, [r12 + 24]
+    test rax, rax
+    jz .fb_emit_both                ; rdi already the top id
+    push rdi                        ; stash top id
+    mov rdi, rax
+    call emit_jmp_end               ; jmp .L_END_chain
+    pop rdi                         ; top id
+    call emit_fallback_label        ; .L_FALLBACK_top:
+    mov qword [r12 + 16], 3
+    add rcx, 1
+    jmp .text_skip
+.fb_emit_both:
+    call emit_jmp_end
+    call emit_fallback_label
+    mov qword [r12 + 16], 3
+    add rcx, 1
+    jmp .text_skip
+
+.shift_chain:
+    ; Phase 1.6: chain a shift link onto head frame P.
+    ; r12 = P, rdi = P.id, dx = cur indent, rbx = shift token, rcx = its index.
+    ; U = P.chain (+24; 0 on pre-chain frames -> use P defensively).
+    ; Emits jmp .L_END_U + .L_FALLBACK_P:, pops P, pushes the new kind-5
+    ; link (chain U), emits the shift condition (fallback variant).
+    ; NOTE: r15 is the output fd — never use it as scratch here. U lives
+    ; in r10 (saved/restored) and P.id rides the stack across the calls.
+    push r10
+    mov r10, [r12 + 24]             ; U = ultimate chain end
+    test r10, r10
+    jnz .sc_have_u
+    mov r10, rdi
+.sc_have_u:
+    push rdi                        ; stash P.id
+    mov rdi, r10
+    call emit_jmp_end               ; jmp .L_END_U
+    pop rdi                         ; P.id
+    call emit_fallback_label        ; .L_FALLBACK_P:
+    dec qword [cf_sp]               ; pop P (its END arrives at chain end)
+    mov rax, [label_id_counter]
+    inc qword [label_id_counter]
+    mov r14, [cf_sp]
+    cmp r14, 2048
+    jae fatal_full
+    shl r14, 5
+    lea r11, [cf_stack + r14]
+    mov [r11], rax
+    mov dx, [rbx + 2]               ; RELOAD: emission calls clobber rdx
+    mov [r11 + 8], dx
+    mov qword [r11 + 16], 5
+    mov [r11 + 24], r10
+    inc qword [cf_sp]
+    mov rdi, rax                    ; new id for the exit jump
+    push rdi
+    call .emit_cond_cmp              ; mov + cmp (rcx preserved)
+    pop rdi
+    mov bl, 1                       ; shift exits to fallback labels
+    call .emit_cond_jump
+    pop r10                         ; restore caller r10 (r15 fd never touched)
+    add rcx, 4
+    jmp .text_skip
 
 .normal_close:
     cmp r13, 4                      
     je .task_close
-    cmp r13, 2                      
-    jne .not_span_close
+    cmp r13, 2
+    je .loop_close
+    cmp r13, 6                      ; Phase 1.6: cycle loops back (1.6.2)
+    je .loop_close
+    cmp r13, 7                      ; Phase 1.6: scan loops back (1.6.2)
+    je .loop_close
+    cmp r13, 1
+    je .nc_when
+    cmp r13, 5                      ; Phase 1.6: dedent-closed shift link
+    je .nc_shift
+    jmp .nc_end_common              ; kind 3 (consumed): end (+chain) below
+.loop_close:
     call emit_jmp_start
-    jmp .not_when_close
+    jmp .nc_end_common
+.nc_when:
+    call emit_fallback_label        ; dummy (no else branch)
+    jmp .nc_end_common
+.nc_shift:
+    call emit_fallback_label        ; dummy F_new (unreferenced)
+.nc_end_common:
+    call emit_end_label             ; END_self (rdi = self id, still live)
+    ; chain end: a shift link (kind 5, or consumed kind 3 from one) also
+    ; closes the ultimate chain end unless it is its own (whens/spans)
+    mov rax, [r12 + 24]
+    test rax, rax
+    jz .nc_chain_done
+    cmp rax, rdi
+    je .nc_chain_done
+    push rdi
+    mov rdi, rax
+    call emit_end_label             ; END_chain
+    pop rdi
+.nc_chain_done:
+    jmp .do_cleanup
 .task_close:
     mov byte [in_task_flag], 0
-    call emit_task_epilogue                   
+    call emit_task_epilogue
     jmp .do_cleanup
-.not_span_close:
-    cmp r13, 1
-    jne .not_when_close
-    call emit_fallback_label        
-.not_when_close:
-    call emit_end_label             
 .do_cleanup:
     mov r9w, [r12 + 8]
     call emit_scope_cleanup
@@ -3000,28 +3310,21 @@ run_codegen:
     jmp .skip_task_tokens
 
 .handle_control_flow:
-    mov rax, rcx
-    inc rax
-    shl rax, 4
-    lea r12, [token_array + rax]    
-    
-    mov rax, rcx
-    add rax, 3
-    shl rax, 4
-    lea r13, [token_array + rax]    
-    
+    ; Phase 1.6: frame push + span-start here; condition emission shared
+    ; via emit_cond_cmp / emit_cond_jump (rcx = keyword index throughout).
     mov rdi, [label_id_counter]
     inc qword [label_id_counter]
-    
+
     mov r14, [cf_sp]
     cmp r14, 2048                   ; Phase 1.5b: cf_stack holds 2048 frames
     jae fatal_full
     shl r14, 5
     lea r11, [cf_stack + r14]
-    mov [r11], rdi                  
-    mov dx, [rbx + 2]               
-    mov [r11 + 8], dx               
-    
+    mov [r11], rdi
+    mov dx, [rbx + 2]
+    mov [r11 + 8], dx
+    mov [r11 + 24], rdi             ; Phase 1.6: chain end starts as self
+
     cmp byte [rbx + 1], 5
     je .setup_while
 .setup_if:
@@ -3034,9 +3337,47 @@ run_codegen:
     pop rdi
 .finish_cf_setup:
     inc qword [cf_sp]
-    
-    push rdi
 
+    call .emit_cond_cmp               ; mov rax,[ident] + cmp (preserves rcx)
+    cmp byte [rbx + 1], 4           ; when -> fallback-label variant
+    je .cf_use_fb
+    xor bl, bl                      ; span -> end-label variant
+    jmp .cf_emit_jump
+.cf_use_fb:
+    mov bl, 1
+.cf_emit_jump:
+    call .emit_cond_jump              ; (rcx, rdi = id, bl = variant)
+    add rcx, 4
+    jmp .text_skip
+
+; ------------------------------------------------------------------------------
+; Phase 1.6 condition emission (shared by when/span/shift):
+;   emit_cond_cmp: IN rcx = keyword index of [kw, ident, op, value].
+;     Emits `mov rax, qword [ident]` + `cmp rax, <value|mem>`.
+;   emit_cond_jump: IN rcx = same, rdi = label id, bl = 1 -> .L_FALLBACK_<id>
+;     variant (when/shift), bl = 0 -> .L_END_<id> variant (span loops).
+;     Emits the operator-selective conditional jump (inverse of the operator).
+;   Both preserve rbx, rcx, rdi and all of r8-r15 except rax/rsi/rdx.
+; ------------------------------------------------------------------------------
+.emit_cond_cmp:
+    push rax
+    push rbx
+    push rcx
+    push rdi
+    push r8
+    push r9
+    push r10
+    push r11
+    push r12
+    push r13
+    mov rax, rcx
+    inc rax
+    shl rax, 4
+    lea r12, [token_array + rax]
+    mov rax, rcx
+    add rax, 3
+    shl rax, 4
+    lea r13, [token_array + rax]
     mov rsi, asm_mov_rax_l
     mov rdx, len_asm_mov_rax_l
     call write_to_file
@@ -3045,14 +3386,12 @@ run_codegen:
     mov rsi, asm_close_bracket_nl
     mov rdx, len_asm_close_bracket_nl
     call write_to_file
-
-    ; --- Compare: identifier RHS loads memory operand; otherwise literal text ---
     cmp byte [r13], 2
-    je .emit_cmp_rhs_mem
+    je .ecc_rhs_mem
     mov rsi, asm_cmp_rax
     mov rdx, len_asm_cmp_rax
     call write_to_file
-    mov rdi, [r13 + 8]              
+    mov rdi, [r13 + 8]
     call get_strlen
     mov rdx, rax
     mov rsi, rdi
@@ -3060,8 +3399,8 @@ run_codegen:
     mov rsi, newline
     mov rdx, 1
     call write_to_file
-    jmp .select_cond_jump
-.emit_cmp_rhs_mem:
+    jmp .ecc_done
+.ecc_rhs_mem:
     mov rsi, asm_cmp_rax_mem
     mov rdx, len_asm_cmp_rax_mem
     call write_to_file
@@ -3070,81 +3409,108 @@ run_codegen:
     mov rsi, asm_close_bracket_nl
     mov rdx, len_asm_close_bracket_nl
     call write_to_file
-
-    ; --- Select exit jump: logical inverse of the condition operator ---
-.select_cond_jump:
+.ecc_done:
+    pop r13
+    pop r12
+    pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rdi
+    pop rcx
+    pop rbx
+    pop rax
+    ret
+.emit_cond_jump:
+    push rax
+    push rbx
+    push rcx
+    push rdi
+    push r8
+    push r9
+    push r10
+    push r11
+    push r12
+    push r13
+    push r14
+    mov r14b, bl                    ; stash variant (bl reused below? no—keep)
     mov rax, rcx
     add rax, 2
     shl rax, 4
     lea r12, [token_array + rax]
-    movzx r13d, byte [r12 + 1]      ; operator subtype (dispatch BEFORE any reg reuse)
-
+    movzx r13d, byte [r12 + 1]      ; operator subtype
     cmp r13b, 15                    ; '!=' -> je
-    je .sel_op_ne
+    je .ecj_ne
     cmp r13b, 11                    ; '<' -> jge
-    je .sel_op_lt
+    je .ecj_lt
     cmp r13b, 12                    ; '>' -> jle
-    je .sel_op_gt
+    je .ecj_gt
     cmp r13b, 13                    ; '<=' -> jg
-    je .sel_op_le
+    je .ecj_le
     cmp r13b, 14                    ; '>=' -> jl
-    je .sel_op_ge
-
-    ; Default: '==' -> jne
-    mov r8, asm_jne_l_end
+    je .ecj_ge
+    mov r8, asm_jne_l_end           ; default '==' -> jne
     mov r9, len_asm_jne_l_end
     mov r10, asm_jne_l_fallback
     mov r11, len_asm_jne_l_fallback
-    jmp .pick_label_variant
-
-.sel_op_ne:
+    jmp .ecj_pick
+.ecj_ne:
     mov r8, asm_je_l_end
     mov r9, len_asm_je_l_end
     mov r10, asm_je_l_fallback
     mov r11, len_asm_je_l_fallback
-    jmp .pick_label_variant
-.sel_op_lt:
+    jmp .ecj_pick
+.ecj_lt:
     mov r8, asm_jge_l_end
     mov r9, len_asm_jge_l_end
     mov r10, asm_jge_l_fallback
     mov r11, len_asm_jge_l_fallback
-    jmp .pick_label_variant
-.sel_op_gt:
+    jmp .ecj_pick
+.ecj_gt:
     mov r8, asm_jle_l_end
     mov r9, len_asm_jle_l_end
     mov r10, asm_jle_l_fallback
     mov r11, len_asm_jle_l_fallback
-    jmp .pick_label_variant
-.sel_op_le:
+    jmp .ecj_pick
+.ecj_le:
     mov r8, asm_jg_l_end
     mov r9, len_asm_jg_l_end
     mov r10, asm_jg_l_fallback
     mov r11, len_asm_jg_l_fallback
-    jmp .pick_label_variant
-.sel_op_ge:
+    jmp .ecj_pick
+.ecj_ge:
     mov r8, asm_jl_l_end
     mov r9, len_asm_jl_l_end
     mov r10, asm_jl_l_fallback
     mov r11, len_asm_jl_l_fallback
-
-.pick_label_variant:
-    cmp byte [rbx + 1], 4           ; 'when' exits to fallback label
-    je .use_fallback_jump
+.ecj_pick:
+    cmp r14b, 1
+    je .ecj_fb
     mov rsi, r8
     mov rdx, r9
-    jmp .write_cond_jump
-.use_fallback_jump:
+    jmp .ecj_write
+.ecj_fb:
     mov rsi, r10
     mov rdx, r11
-.write_cond_jump:
+.ecj_write:
     call write_to_file
-    pop rax
+    mov rax, rdi                    ; label id (preserved by our frame)
     call write_rax_to_file
     mov rsi, newline
     mov rdx, 1
     call write_to_file
-    add rcx, 4                      
-    jmp .text_skip
+    pop r14
+    pop r13
+    pop r12
+    pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rdi
+    pop rcx
+    pop rbx
+    pop rax
+    ret
 
 .handle_syscall:
     mov rax, rcx
@@ -4299,20 +4665,41 @@ run_codegen:
     cmp r13, 4                      
     je .empty_task_close
     cmp r13, 2
-    jne .empty_not_span
-    call emit_jmp_start
-    jmp .empty_not_when
+    je .empty_loop
+    cmp r13, 6                      ; Phase 1.6: cycle (1.6.2)
+    je .empty_loop
+    cmp r13, 7                      ; Phase 1.6: scan (1.6.2)
+    je .empty_loop
+    cmp r13, 1
+    je .empty_when
+    cmp r13, 5                      ; Phase 1.6: shift link at EOF
+    je .empty_shift
+    jmp .empty_end_common           ; kind 3 (consumed)
 .empty_task_close:
     mov byte [in_task_flag], 0
     call emit_task_epilogue
     jmp .empty_do_cleanup
-.empty_not_span:
-    cmp r13, 1
-    jne .empty_not_when
-    call emit_fallback_label        
-.empty_not_when:
+.empty_loop:
+    call emit_jmp_start
+    jmp .empty_end_common
+.empty_when:
+    call emit_fallback_label        ; dummy (no else branch)
+    jmp .empty_end_common
+.empty_shift:
+    call emit_fallback_label        ; dummy F_new (unreferenced)
+.empty_end_common:
+    call emit_end_label             ; END_self
+    mov rax, [r12 + 24]             ; Phase 1.6: chain end unless own
+    test rax, rax
+    jz .empty_chain_done
+    cmp rax, rdi
+    je .empty_chain_done
+    push rdi
+    mov rdi, rax
     call emit_end_label
-
+    pop rdi
+.empty_chain_done:
+    jmp .empty_do_cleanup
 .empty_do_cleanup:
     mov r9w, [r12 + 8]
     call emit_scope_cleanup

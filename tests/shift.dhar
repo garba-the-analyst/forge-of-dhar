@@ -1,0 +1,22 @@
+task check(v: i32, want: i32):
+    flux r: i32 = 0
+    when v == 1:
+        r = 10
+    shift v == 2:
+        r = 20
+    shift v == 3:
+        r = 30
+    fallback:
+        r = 99
+    when r == want:
+        lock ok: str = "PASS\n"
+        sys 1, 1, ok, 5
+    fallback:
+        lock bad: str = "FAIL\n"
+        sys 1, 1, bad, 5
+
+task core():
+    check(1, 10)
+    check(2, 20)
+    check(3, 30)
+    check(9, 99)
