@@ -1,7 +1,7 @@
 # **⚒️ The Forge of Dhar (V0.4.0-doc Architecture)**
 
 **The Forge of Dhar** is the foundational, pre-bootstrapped systems compiler for the **Dhar Programming Language**.  
-Designed and engineered by **Garba the Analyst**, V0 operates with **zero external dependencies** (no libc, no standard library, no runtime). Written entirely in 100% bare-metal x86\_64 NASM Assembly (src/lexer.asm), it is a self-contained systems compiler for the **Strict Alpha §2.2 subset only**: `lock/flux`, `task/give`, `when/shift/fallback` (six operators), `span/cycle/scan/escape/skip`, `mold` layout-only (currently `todo`-gated), array indexing over `i32/str/bool/raw[N]`, `peek/poke`, `sys/sysret` (+ value form), and `gen`. `forge`/`view`/`grab`/`state`/`trap`/`enforce` are **not in subset and are rejected** with `StageAlpha 2.2` diagnostics; `pull`/`expose`/`mold` bodies are subset-but-`todo`-gated (rejected until implemented). Only the Linux x86\_64 target emits working code; `--target=windows|wasi` parse as scaffolding only (see Target Matrix).  
+Designed and engineered by **Garba the Analyst**, V0 operates with **zero external dependencies** (no libc, no standard library, no runtime). Written entirely in 100% bare-metal x86\_64 NASM Assembly (src/asm/, nine one-definition-per-file modules per StageAlpha §3), it is a self-contained systems compiler for the **Strict Alpha §2.2 subset only**: `lock/flux`, `task/give`, `when/shift/fallback` (six operators), `span/cycle/scan/escape/skip`, `mold` layout-only, `pull`/`expose` directives, `bool` literals (`true`/`false` as numeric 1/0), array indexing over `i32/str/bool/raw[N]`, `peek/poke`, `sys/sysret` (+ value form), and `gen`. `forge`/`view`/`grab`/`state`/`trap`/`enforce` are **not in subset and are rejected** with `StageAlpha 2.2` diagnostics; modeled bodies are rejected as not-subset (field defaults/generics/nesting). Only the Linux x86\_64 target emits working code; `--target=windows|wasi` parse as scaffolding only (see Target Matrix).  
 This repository serves as the Turing-complete foundation required to compile Dhar Stage 1 (the self-hosted compiler written in Dhar itself).
 
 ## **📋 Table of Contents**
@@ -38,7 +38,7 @@ Dhar is a native systems language built for absolute determinism, explicit memor
 
 ## **🧠 Compiler Internal Memory Layout**
 
-The Stage 0 assembly engine (src/lexer.asm) manages its state within a pre-allocated 1MB dynamic memory architecture inside the .bss segment:
+The Stage 0 assembly engine (src/asm/) manages its state within a pre-allocated 1MB dynamic memory architecture inside the .bss segment:
 
 | Segment Memory Array | Reserved Size | Capacity / Purpose |
 | :---- | :---- | :---- |
@@ -383,7 +383,7 @@ task core():
 
 ## **🎯 Target Architecture & Cross-Compilation Matrix**
 
-The Dhar compiler includes target triple dispatch logic (src/lexer.asm), enabling code generation routing across multiple target platforms:
+The Dhar compiler includes target triple dispatch logic (src/asm/runtime.asm + entry.asm), enabling code generation routing across multiple target platforms:
 
 | Target Platform Flag | Binary Object Format | Entry Point | Calling Convention / System Bridge | Target Status in V0 |
 | :---- | :---- | :---- | :---- | :---- |
@@ -402,11 +402,11 @@ The Dhar compiler includes target triple dispatch logic (src/lexer.asm), enablin
 
 ### **Step 1: Assemble the Stage 0 Native Compiler (dharc)**
 
-Compile the raw assembly compiler engine. Note: the production compiler is **src/lexer.asm alone**; the Python files under src/ are an archived pre-bootstrapping prototype and play no role in the toolchain.
+Compile the raw assembly compiler engine. Note: the production compiler is **src/asm/entry.asm** (which %includes the eight sibling modules); the `python` helper files under src/ are an archived pre-bootstrapping prototype and play no role in the toolchain.
 ```
 Bash  
 mkdir \-p build  
-nasm \-f elf64 \-g \-F dwarf src/lexer.asm \-o build/lexer.o  
+nasm \-f elf64 \-I src/asm src/asm/entry.asm \-o build/lexer.o  
 ld \-m elf\_x86\_64 \-o build/dharc build/lexer.o
 ```
 ### **Step 2: Compile a Dhar Source File**

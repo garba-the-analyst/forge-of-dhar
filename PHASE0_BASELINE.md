@@ -113,11 +113,18 @@
      the new global helper re-anchored parser locals (kept local: `.find_mold`),
      and the header consumed onto `{` so depth never incremented (consume 1).
      Nested molds and nested-mold field types reject as not-subset.
- §3 modularity: still open — the stashed src/asm split is baseline-vintage (4798
- lines, predates all Phase-1 fixes) and cannot integrate without regressing; a
- fresh split of the current monolith is future surgery, gated by this file's suite.
- Parked, out of Strict Alpha scope: Phase 1.6.3 mold-layout WIP (stashed, breaks build —
- src/asm/ split + src/lexer/ empty dir also unbuilt/untracked, production is src/lexer.asm alone).
+ §3 modularity: DONE 2026-10-14 — src/asm/ holds the nine mandated modules
+ (data/entry/tokenize/parse/calls/symbols/frames/codegen/runtime; src/lexer.asm
+ deleted, nothing duplicated). entry.asm = %include directives + the entry point
+ only. Gates after the split: battery 43/43, shipped 7/7, probes identical
+ (P2 documented-flaw, P5 correct-reject, P6 informational exit 1), fuzz n=150
+ seed 20261011 identical (963/1200, 237 truncation-only, 0 real), Honing 8/8,
+ criterion 5 reproducibility verified (clean rebuild sha256-identical).
+ Deviation documented honestly: the Canon requires the module shape "from its
+ first commit, not refactored into this shape later"; the split landed mid-project
+ (auditable in git history). Shape, uniqueness, and behavior are conformant now.
+ Parked, out of Strict Alpha scope: Phase 1.6.3 mold WIP stash (baseline-vintage,
+ superseded by the implemented layout-only mold).
 
 ## Reproduce
 
@@ -125,5 +132,5 @@
  nasm -f elf64 build/output.asm -o /tmp/o.o &&
  ld -m elf_x86_64 -o /tmp/o /tmp/o.o && /tmp/o
  python3 <dhar-popl2027-package>/artifact/dharfuzz/dharfuzz.py \
-   --stage0-src src/lexer.asm --n-per-stratum 150 --seed 20261011 \
+   --stage0-src src/asm/entry.asm --n-per-stratum 150 --seed 20261011 \
    --out /tmp/gate --validate-oracle --reduce 3
