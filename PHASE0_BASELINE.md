@@ -91,7 +91,7 @@
  Notes: `bool` has storage but no `true`/`false` literals (they are undeclared
  idents — use 1/0; now a clean diagnostic instead of a NASM error); `print()`,
  `foo(a,b):`, 7-arg calls, double fallback all reject loudly (verified).
- Gate: tests/conformance_alpha.sh 43/43; shipped 7/7; probes 8/8+P5+P6;
+ Gate: tests/conformance_alpha.sh 45/45; shipped 7/7; probes 8/8+P5+P6;
  fuzz n=150 identical (963/1200, 237 truncation-only, 0 real); Honing 8/8.
  IMPLEMENTED 2026-10-14 on fix/stage0-complete (merged here) — remaining §2.2
  rows closed in lexer/parser only (no codegen emission changes except the mold
@@ -116,7 +116,7 @@
  §3 modularity: DONE 2026-10-14 — src/asm/ holds the nine mandated modules
  (data/entry/tokenize/parse/calls/symbols/frames/codegen/runtime; src/lexer.asm
  deleted, nothing duplicated). entry.asm = %include directives + the entry point
- only. Gates after the split: battery 43/43, shipped 7/7, probes identical
+ only. Gates after the split: battery 45/45, shipped 7/7, probes identical
  (P2 documented-flaw, P5 correct-reject, P6 informational exit 1), fuzz n=150
  seed 20261011 identical (963/1200, 237 truncation-only, 0 real), Honing 8/8,
  criterion 5 reproducibility verified (clean rebuild sha256-identical).

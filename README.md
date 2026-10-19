@@ -379,7 +379,7 @@ task core():
 > * `raw[N]` elements are **bytes**: `buf[i] = v` stores the low byte (`mov byte [buf+rax], cl`), `peek` loads one byte zero-extended. This is self-consistent (stores and peeks agree at every index).
 > * Consequence: `buf[0] = res` publishes only `res & 0xFF` (low byte). Full-range `i32` checksums (`-10` → `246`, `338` → `82`) truncate. The `dharfuzz` harness compares full 64-bit (`struct.unpack("<q")`), so full-range random programs report `wrong` even when arithmetic/control/calls are correct. Restrict published values to `0..255` for exact gate parity, or mask expected with `& 0xFF`. See `PHASE0_BASELINE.md` gate table. Multi-byte store is **not** planned in Stage 0 (would break byte-array consistency); it is Stage-1+ design work.
 
-> * **`bool` literals:** `true`/`false` are numeric `1`/`0` (lexer rewrite, shared numeric path): `flux b: bool = true` and `when b == true` pass. The words are reserved and rejected as identifiers. Repeat the battery any time with `tests/conformance_alpha.sh` (43 cases, needs `nasm`/`ld`/`python3`).
+> * **`bool` literals:** `true`/`false` are numeric `1`/`0` (lexer rewrite, shared numeric path): `flux b: bool = true` and `when b == true` pass. The words are reserved and rejected as identifiers. Repeat the battery any time with `tests/conformance_alpha.sh` (45 cases, needs `nasm`/`ld`/`python3`).
 
 ## **🎯 Target Architecture & Cross-Compilation Matrix**
 

@@ -16,8 +16,8 @@ t() { # t <name> <expect:run|reject> <dhar-file-content via stdin>
   if [ "$expect" = run ]; then
     if [ $dharc_ec -eq 0 ] && [ -s build/output.asm ] && nasm -f elf64 build/output.asm -o /tmp/c.o 2>/dev/null && ld -m elf_x86_64 -o /tmp/c /tmp/c.o 2>/dev/null; then
       if timeout 5 /tmp/c > /tmp/c.bin 2>/dev/null; then
-        local got; got=$(python3 -c "import struct,sys; d=open('/tmp/c.bin','rb').read(); print(struct.unpack('<Q',d[:8])[0] if len(d)>=8 else len(d))")
-        if [ "$got" = "$4" ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); NOTES+=("$name: RAN but got $got want $4"); fi
+        local got; got=$(python3 -c "import struct,sys; d=open('/tmp/c.bin','rb').read(); print(struct.unpack('<Q',d[-8:])[0] if len(d)>=8 else len(d))")
+        if [ "$got" = "$4" ] && { [ -z "$5" ] || head -c "${#5}" /tmp/c.bin | grep -qF -- "$5"; }; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); NOTES+=("$name: RAN but got $got want $4"); fi
       else FAIL=$((FAIL+1)); NOTES+=("$name: runtime crash"); fi
     else FAIL=$((FAIL+1)); NOTES+=("$name: failed to build (dharc_ec=$dharc_ec $msg)"); fi
   else # expect reject
@@ -254,6 +254,23 @@ task core():
     res = helper()
     buf[z] = res
     sys 1, 1, buf, 8' 42
+t "give-return" run 'flux buf: raw[8]
+task helper(a: i32):
+    flux r: i32 = 0
+    r = a * 2
+    give r
+task core():
+    flux z: i32 = 0
+    flux res: i32 = 0
+    res = helper(5)
+    buf[z] = res
+    sys 1, 1, buf, 8' 10
+t "gen-stdout" run 'flux buf: raw[8]
+task core():
+    flux res: i32 = 7
+    buf[0] = res
+    gen "gen-works\n"
+    sys 1, 1, buf, 8' 7 $'gen-works\n'
 t "pull-bare" reject 'pull
 flux buf: raw[8]
 task core():
