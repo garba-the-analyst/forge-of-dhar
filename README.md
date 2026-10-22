@@ -1,11 +1,37 @@
 # **⚒️ The Forge of Dhar (V0.4.0-doc Architecture)**
 
 **The Forge of Dhar** is the foundational, pre-bootstrapped systems compiler for the **Dhar Programming Language**.  
-Designed and engineered by **Garba the Analyst**, V0 operates with **zero external dependencies** (no libc, no standard library, no runtime). Written entirely in 100% bare-metal x86\_64 NASM Assembly (src/asm/, nine one-definition-per-file modules per StageAlpha §3), it is a self-contained systems compiler for the **Strict Alpha §2.2 subset only**: `lock/flux`, `task/give`, `when/shift/fallback` (six operators), `span/cycle/scan/escape/skip`, `mold` layout-only, `pull`/`expose` directives, `bool` literals (`true`/`false` as numeric 1/0), array indexing over `i32/str/bool/raw[N]`, `peek/poke`, `sys/sysret` (+ value form), and `gen`. `forge`/`view`/`grab`/`state`/`trap`/`enforce` are **not in subset and are rejected** with `StageAlpha 2.2` diagnostics; modeled bodies are rejected as not-subset (field defaults/generics/nesting). Only the Linux x86\_64 target emits working code; `--target=windows|wasi` parse as scaffolding only (see Target Matrix).  
-This repository serves as the Turing-complete foundation required to compile Dhar Stage 1 (the self-hosted compiler written in Dhar itself).
+Designed and engineered by **Garba the Analyst**, V0 operates with **zero external dependencies** (no libc, no standard library, no runtime). Written entirely in 100% bare-metal x86\_64 NASM Assembly (src/asm/, nine one-definition-per-file modules per StageAlpha §3), it is a self-contained systems compiler for the **Strict Alpha §2.2 subset only**: `lock/flux`, `task/give`, `when/shift/fallback` (six operators), `span/cycle/scan/escape/skip`, `mold` layout-only, `pull`/`expose` directives, `bool` literals (`true`/`false` as numeric 1/0), array indexing over `i32/str/bool/raw[N]`, `peek/poke`, `sys/sysret` (+ value form), and `gen`. `forge`/`view`/`grab`/`state`/`trap`/`enforce` are **not in subset and are rejected** with `StageAlpha 2.2` diagnostics; modeled bodies are rejected as not-subset (field defaults/generics/nesting). It emits programs for Linux x86\_64 and Windows x64 (Windows is verified in a CPU emulator, not yet on a real machine); any other `--target` is refused with an error. `give` returns a value or one operation (`give a + b`).  
+This repository is the Stage 0 bridge: its job is to compile Stage 1, the Dhar compiler written in Dhar itself ([honing-dhar](https://github.com/garba-the-analyst/honing-dhar)). Stage 1 does not compile yet; the status table below says what does.
+
+## **🔎 Current status**
+
+<!-- gen:status:start -->
+| Area | Status | What it means today |
+| --- | --- | --- |
+| Stage 0 compiler | **Works** | `dharc` is written in NASM x86-64 assembly (nine modules, no libc). It reads a `.dhar` file and writes assembly; `nasm` and a linker turn that into a program. The conformance battery has 64 tests and all of them pass on both targets. |
+| Native programs, no runtime | **Works** | Output is a small static program that talks to the operating system directly through `sys`. The examples below are about 9 KB each. |
+| Bounds checking on buffers | **Works** | An index outside a `raw[N]` buffer stops the program with `Dhar: index out of bounds` and exit status 1, instead of silently corrupting memory. |
+| The language itself | **Partly** | A strict first subset: `i32`, `str`, `bool` and `raw[N]`; tasks with parameters; `give` with a value or one operation (`give a + b`); `when`/`shift`/`fallback`; loops; `sys` calls; layout-only `mold`. Anything outside the subset is rejected with a clear message. |
+| Target: Linux x86-64 | **Works** | Programs are built, linked and run natively in the tests. |
+| Target: Windows x64 | **Partly** | Programs assemble as win64, link into a PE, and run correctly in a CPU emulator that checks the Windows calling rules; all 64 tests pass there. It has not been run on a real Windows machine yet, and `dharc` itself still runs only on Linux (on Windows, use WSL). |
+| Targets: ARM64, RISC-V, WebAssembly (WASI) | **Not yet** | `dharc` refuses these with an error rather than producing the wrong output. They are planned as back ends of the Stage 1 compiler, on the machine-independent IR. |
+| Stage 1: the compiler written in Dhar | **Designed** | 8 source files exist in the Honing Dhar repository (lexer, parser, AST, symbols, type check, IR, code generation, driver) and all of them pass through Stage 0. They are scaffolding and stubs, not a working compiler. |
+| Safety without a garbage collector | **Designed** | Compile-time ownership and borrowing (`view`, `grab`) and the error model (`state`, `trap`, `enforce`) are specified. Stage 0 rejects them; there is no borrow checker yet. |
+| Cybersecurity, AI and quantum direction | **Designed** | The direction and its acceptance gates are written down as Canon Amendment A-1, a draft that still needs the author's ratification. Nothing for them is built yet: no `std.crypto`, no float or tensor types, no quantum back end. |
+| Self-hosting | **Not yet** | Stage 1 does not compile itself, so the byte-for-byte bootstrap check has not been run. |
+| Optimiser | **Not yet** | Every variable lives in memory and nothing is kept in registers. That is the main reason Dhar trails C in the speed test. Register allocation is planned for after the bootstrap. |
+| Modules, standard library, `Kun` | **Not yet** | `pull` and `expose` are validated but link a single file. There is no importer, no standard library and no package manager yet; programs call the system directly. |
+| Try Dhar in the browser | **Not yet** | Planned for this website. It needs a way to run `dharc` and the result in the browser, and nothing of that exists yet. |
+
+Status checked 22 October 2026 against commit `471b53f`. Words: **Works** = runs and is tested; **Partly** = some of it runs and is tested; **Designed** = specified or scaffolded, not working; **Not yet** = nothing exists. Generated from `status/status.json` (see `docs/HONESTY.md`).
+<!-- gen:status:end -->
+
+The full dated log is in [PROGRESS.md](PROGRESS.md). The direction (security first, then AI, then quantum) is in [docs/canon/AMENDMENT-A1-DIRECTION.md](docs/canon/AMENDMENT-A1-DIRECTION.md). How these numbers are kept honest is in [docs/HONESTY.md](docs/HONESTY.md).
 
 ## **📋 Table of Contents**
 
+> 0. [Current status](#-current-status)
 > 1. [Core Philosophy & Memory Architecture]
 > 2. [Compiler Internal Memory Layout] 
 > 3. [Exhaustive Language Reference & Grammar]
@@ -33,7 +59,7 @@ Dhar is a native systems language built for absolute determinism, explicit memor
 > * **Zero Abstraction Tax:** Dhar compiles directly into native target assembly without linking against standard C libraries (-nostdlib), runtime managers, or garbage collectors.  
 > * **Deterministic Indentation Scoping:** Memory scope is tracked via strict indentation level counting. Local variables and array buffers are bound to their indentation block.  
 > * **Scope Cleanup Tracking:** The compiler tracks scope boundaries via an internal Control Flow (CF) Stack. When an indented block exits, the compiler emits cleanup routines to deallocate local buffers automatically.  
-> * **Direct Kernel Sovereignty:** System operations bypass user-space wrappers. The sys keyword maps directly to kernel instruction interfaces (syscall on Linux x86\_64, svc \#0 on ARM64, WinAPI imports on Windows, and wasi\_snapshot\_preview1 on WebAssembly).  
+> * **Direct Kernel Sovereignty:** System operations bypass user-space wrappers. The sys keyword maps directly to kernel instruction interfaces (`syscall` on Linux x86\_64; on Windows, a small built-in stub turns the same call into the matching Win32 call. `svc #0` for ARM64 and the WASI imports are planned for the Stage 1 back ends, not built).  
 > * **Flat Stack Control Flow:** Manages nested conditionals, loops, and function closures via an internal static Control Flow Stack without recursive call overhead during compilation.
 
 ## **🧠 Compiler Internal Memory Layout**
@@ -379,26 +405,31 @@ task core():
 > * `raw[N]` elements are **bytes**: `buf[i] = v` stores the low byte (`mov byte [buf+rax], cl`), `peek` loads one byte zero-extended. This is self-consistent (stores and peeks agree at every index).
 > * Consequence: `buf[0] = res` publishes only `res & 0xFF` (low byte). Full-range `i32` checksums (`-10` → `246`, `338` → `82`) truncate. The `dharfuzz` harness compares full 64-bit (`struct.unpack("<q")`), so full-range random programs report `wrong` even when arithmetic/control/calls are correct. Restrict published values to `0..255` for exact gate parity, or mask expected with `& 0xFF`. See `PHASE0_BASELINE.md` gate table. Multi-byte store is **not** planned in Stage 0 (would break byte-array consistency); it is Stage-1+ design work.
 
-> * **`bool` literals:** `true`/`false` are numeric `1`/`0` (lexer rewrite, shared numeric path): `flux b: bool = true` and `when b == true` pass. The words are reserved and rejected as identifiers. Repeat the battery any time with `tests/conformance_alpha.sh` (45 cases, needs `nasm`/`ld`/`python3`).
+> * **`bool` literals:** `true`/`false` are numeric `1`/`0` (lexer rewrite, shared numeric path): `flux b: bool = true` and `when b == true` pass. The words are reserved and rejected as identifiers. Repeat the battery any time with `tests/conformance_alpha.sh` (64 cases; needs `nasm`/`ld`/`python3`. Run `TARGET=windows ./tests/conformance_alpha.sh` for the Windows target, which also needs `lld-link`, `llvm-dlltool` and `pip install unicorn pefile`; `make test` runs both).
 
 ## **🎯 Target Architecture & Cross-Compilation Matrix**
 
-The Dhar compiler includes target triple dispatch logic (src/asm/runtime.asm + entry.asm), enabling code generation routing across multiple target platforms:
+`dharc` takes `--target=linux` (the default) or `--target=windows`. Anything else, including `wasi`, `arm64` and `riscv64`, is **refused**: `dharc` prints `Fatal Error: unsupported target` on stderr, exits 1 and leaves no `output.asm` behind, so a wrong target can never silently produce Linux code.
 
-| Target Platform Flag | Binary Object Format | Entry Point | Calling Convention / System Bridge | Target Status in V0 |
+| Target flag | Object format | Entry point | System bridge | Status |
 | :---- | :---- | :---- | :---- | :---- |
-| \--target=linux | ELF64 (-f elf64) | \_start | Native x86\_64 Kernel syscall | **Fully Operational (Stage 0 Native)** |
-| \--target=windows | PE32+ (-f win64) | main | WinAPI (WriteFile, ExitProcess, GetStdHandle) | **Code Generator Scaffolding Active** |
-| \--target=wasi | WebAssembly Bytecode | \_start | WASI Preview 1 Imports (fd\_write, proc\_exit) | **Code Generator Scaffolding Active** |
+| `--target=linux` | ELF64 (`nasm -f elf64`) | `_start` | `syscall` instruction | **Works.** All 64 conformance tests run natively. |
+| `--target=windows` | PE32+ (`nasm -f win64`) | `main` | `GetStdHandle`, `WriteFile`, `ReadFile`, `ExitProcess` through a built-in `dhar_rt_syscall` stub (Linux syscall numbers 0, 1 and 60; anything else returns -38) | **Partly.** All 64 tests pass in a CPU emulator (`tools/pe_emulate.py`) that enforces the Windows x64 stack-alignment rule at every call. Not yet run on real Windows. The image is linked at a fixed low base (`/base:0x400000 /fixed /largeaddressaware:no`) because Stage 0 uses absolute 32-bit addresses. `dharc` itself runs only on Linux; on Windows use WSL. |
+| `--target=arm64` | ELF64 AArch64 | | `svc #0` | **Not built.** Planned as a back end of the Stage 1 compiler. |
+| `--target=riscv64` | ELF64 RISC-V | | `ecall` | **Not built.** Planned as a back end of the Stage 1 compiler. |
+| `--target=wasi` | WebAssembly | `_start` | WASI preview 1 (`fd_write`, `proc_exit`) | **Not built.** Planned as a back end of the Stage 1 compiler. |
+
+Why the other architectures wait for Stage 1: Stage 0 turns each token directly into assembly text, with no intermediate form, so a new processor means a second ~2,600-line code generator that would be thrown away once Stage 1 has its machine-independent IR. The plan is in [docs/MULTI-ISA-PLAN.md](docs/MULTI-ISA-PLAN.md).
 
 ## **🛠️ Building & Compiler CLI Usage**
 
 ### **Prerequisites**
 
-> * Linux OS (x86\_64 architecture)  
+> * Linux (x86\_64) to run `dharc`  
 > * nasm (Netwide Assembler)  
 > * ld (GNU Linker)  
-> * hyperfine *(Optional, for running benchmark suites)*
+> * hyperfine *(optional, for the benchmark suite)*  
+> * `lld-link`, `llvm-dlltool`, `python3` with `unicorn` and `pefile` *(optional, only to build and test the Windows target)*
 
 ### **Step 1: Assemble the Stage 0 Native Compiler (dharc)**
 
@@ -406,8 +437,9 @@ Compile the raw assembly compiler engine. Note: the production compiler is **src
 ```
 Bash  
 mkdir \-p build  
-nasm \-f elf64 \-I src/asm src/asm/entry.asm \-o build/lexer.o  
-ld \-m elf\_x86\_64 \-o build/dharc build/lexer.o
+nasm \-f elf64 \-I src/asm src/asm/entry.asm \-o build/dharc.o  
+ld \-m elf\_x86\_64 \-o build/dharc build/dharc.o  
+\# or simply: make
 ```
 ### **Step 2: Compile a Dhar Source File**
 
@@ -417,8 +449,10 @@ Bash
 \# Compile for Native Linux ELF Target (Default)  
 ./build/dharc benchmarks/workloads/test.dhar \--target=linux
 
-\# Cross-Compile for Windows PE Target (SCAFFOLDING ONLY — parses flag, still emits Linux ELF; do not use for Windows binaries)
+\# Windows x64: emits win64 assembly (build it into prog.exe with: make windows-exe SRC=prog.dhar)
 ./build/dharc benchmarks/workloads/test.dhar \--target=windows
+
+\# Anything else is refused (exit 1, no output.asm): wasi, arm64, riscv64 are not built
 ```
 ### **Step 3: Assemble and Link the Emitted Binary**
 ```
@@ -437,22 +471,26 @@ ld \-m elf\_x86\_64 \-o build/test\_program build/output.o
 Dhar was benchmarked against leading system languages, JIT runtimes, and interpreted engines using a standardized high-throughput byte-stream iteration simulator (1,048,576 total condition evaluations: 16 outer cycles x 65,536 inner iterations each).  
 Benchmarks were executed under strict CPU core pinning (taskset \-c 1\) with 100 statistical runs per language via hyperfine (3-run warmup). Full methodology and raw telemetry live in [benchmarks/README.md](benchmarks/README.md).
 
-### **Performance Leaderboard (V0.3.0 Telemetry)**
+### **Performance Leaderboard**
 
-| Rank | Language / Runtime Compiler | Mean | Median | Standard Deviation (σ) | Index vs C |
-| :---- | :---- | :---- | :---- | :---- | :---- |
-| **1** | C (GCC \-nostdlib \-O3) | **1.58 ms** | 0.47 ms | ±2.91 ms | 1.0x (Baseline) |
-| **2** | C++ (G++ \-O3) | **2.32 ms** | 0.90 ms | ±5.21 ms | ~1.5x slower |
-| **3** | Rust (rustc Release \-C opt-level=3) | **2.61 ms** | 2.06 ms | ±1.78 ms | ~1.7x slower |
-| **4** | **Dhar V0 (Native x86\_64 Assembly Engine)** | **8.40 ms** | **7.28 ms** | $\\pm 4.93\\text{ ms}$ | \~5.3x slower |
-| **5** | Node.js (V8 JIT JavaScript) | **98.5 ms** | 85.1 ms | ±55.7 ms | \~62x slower |
-| **6** | PHP 8.3 (CLI) | **110.6 ms** | 92.5 ms | ±75.9 ms | \~70x slower |
-| **7** | Java (OpenJDK 21 JIT) | **165.1 ms** | 122.2 ms | ±142.1 ms | \~104x slower |
-| **8** | Python 3.12 | **180.6 ms** | 148.1 ms | ±92.2 ms | \~114x slower |
+<!-- gen:speed:start -->
+| Rank | Language / runtime | Median | Mean | Std dev | vs C (median) | vs C (mean) |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: |
+| 1 | C (raw, -O3) | 0.47 ms | 1.58 ms | 2.91 ms | 1.0x | 1.0x |
+| 2 | C++ (-O3) | 0.90 ms | 2.32 ms | 5.21 ms | 1.9x | 1.5x |
+| 3 | Rust (release) | 2.06 ms | 2.61 ms | 1.78 ms | 4.4x | 1.7x |
+| 4 | **Dhar** | 7.28 ms | 8.40 ms | 4.93 ms | 15.5x | 5.3x |
+| 5 | Node.js | 85.06 ms | 98.48 ms | 55.74 ms | 181.0x | 62.3x |
+| 6 | PHP 8.3 | 92.49 ms | 110.57 ms | 75.86 ms | 196.8x | 70.0x |
+| 7 | Java (OpenJDK) | 122.22 ms | 165.06 ms | 142.11 ms | 260.0x | 104.5x |
+| 8 | Python 3 | 148.08 ms | 180.56 ms | 92.22 ms | 315.1x | 114.3x |
+
+Dhar is **15.5x slower than C by the median** (5.3x by the mean) and **11.7x to 20.3x faster than Node.js, PHP, Java and Python by the median** (11.7x to 21.5x by the mean). Quote both columns: at a millisecond or two, process start-up and scheduler noise are as large as the work, so the mean flatters Dhar against C and the median is the steadier figure. One workload only (1,048,576 comparisons), `hyperfine` 100 runs after 3 warm-ups, pinned with `taskset -c 1`; whole-process time. Generated from `benchmarks/results/*.json`.
+<!-- gen:speed:end -->
 
 ### **Architectural Conclusion**
 
-Dhar V0 is the fastest entry among non-optimizing compilers and sits squarely in the native tier: roughly **5x behind auto-vectorized \-O3 C**, and an order of magnitude ahead of every JIT or interpreted engine (V8, JVM, PHP, CPython).
+Dhar is in the native tier but well behind optimised C: see the table above for the median and mean ratios. It is far ahead of the JIT and interpreted runtimes on this one workload. No other non-optimising compiler was measured, so no claim is made about them.
 
 This gap is expected and documented for V0:
 
@@ -461,7 +499,7 @@ This gap is expected and documented for V0:
 > * **Correctness Before Speed:** V0.3.0 fixed inverted codegen for relational operators in span/when conditions (see changelog in benchmarks/README.md). Pre-V0.3.0 telemetry measured a workload whose loops silently never executed and has been fully retired.
 > * **Phase 1 Rebuild (correctness gate, HEAD 8326bf2):** Fixed nested-`when` fallthrough into `fallback` (both branches ran when a then-block ended in a nested `when`; `fallback` now binds only to the frame at its own indent — P7 PASS), restricted the `inc`/`dec` fold to `+`/`-` (`x = x * 1` wrongly emitted `dec`), made `buf[i] = v` a byte store per Spec1 §14.4 (`raw[N]` is N bytes; store/`peek` stride mismatch and in-range neighbor clobber fixed — P2/P11 byte-consistent), and fixed identifier initializers (`flux x: i32 = y` emitted the bare name as an immediate). Calls verified: assigned-call first-arg drop fixed (P3 `add(2,3)=5` PASS, P4 `sub3(10,3,2)=5` PASS, P9 `g(41)=42` PASS) and zero-param swallow fixed (P8 `=16` PASS), locked by `tests/calls.dhar` (4-task 0/1/2/3-arg sum `=57` PASS, shared local name `r` — FIXED 2026-10-14: owner-clobber `qword/dword` bug, see `PHASE0_BASELINE.md`). Task-local buffers passed to `sys`/`sysret` and value-form `dest = sys(...)` now pass the buffer address (P1 `=42` PASS; locals previously passed slot content, printing nothing). Global identifiers now emit as `dhar_<name>` (P12 `out=9` PASS; previously broke NASM). Every index operation is bounds-checked per Spec1 §14.4 with a stderr trap + clean exit (P6 OOB now `Dhar: index out of bounds` exit 1, never SIGSEGV; local `raw[N]` frames sized to `ceil(N/8)` slots). The parser rejects non-subset constructs (`forge`/`view`/`grab`/`trap`/`enforce`, plus `state` as reserved) with `StageAlpha 2.2` diagnostics, `todo`-gates subset-but-unimplemented (`mold` bodies/`pull`/`expose` — and since the §2.2 audit also rejects malformed ident-led statements (`y += 1`, bare `y`) as `malformed statement shape`, extra Spec1 widths (`i8`/`f32`/…) as `not in subset`, and undeclared/task/array value idents (`x = nosuch`) as `undeclared`/`expression` (call RHS `dest = fn(...)` still passes); `shift`/`cycle`/`scan`/`escape`/`skip` are implemented since 1.6.1/1.6.2), and the compiler guards all fixed tables, reports errors on stderr, and never leaves a stale `output.asm` behind. Stratified differential gate (seed 20261011, gcc oracle 160/160 agree at n=20, 480/480 at n=150 per paper): **probes 9/10 PASS + P5 correct-reject + P6 controlled-trap** (P2 probe itself aliases the output buffer — `buf[1]=66` then `buf[0]=res` leaves `[66,66,...]=16962`; with non-aliasing index `i=10` it prints `66` PASS; compiler byte/byte behavior is correct, probe expectation is flawed, see §13); **random 963/1200 PASS full-range, 1200/1200 PASS when masked to low byte** (`expected & 0xFF == got & 0xFF` on all 237 diffs at n=150 — pure `buf[0]=res` byte-width truncation, zero logic bugs; restrict published `res` to `0..255` for exact parity). The old `1200/1200 pass` claim is withdrawn.
 
-By compiling directly to lean x86\_64 machine code with zero runtime, standard library, or GC overhead — while still executing real branchy workloads at native-tier speeds out of the box — Dhar provides the deterministic foundation Stage 1 self-hosting requires. Register allocation and peephole optimization are scheduled as post-bootstrap compiler passes.
+By compiling directly to lean x86\_64 machine code with zero runtime, standard library, or GC overhead — while still executing real branchy workloads at native-tier speeds out of the box — Dhar aims to provide the deterministic foundation Stage 1 self-hosting needs. Register allocation and peephole optimization are scheduled as post-bootstrap compiler passes.
 
 
 ## **💻 Comprehensive Code Examples**
