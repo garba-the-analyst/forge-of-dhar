@@ -9,7 +9,7 @@ BENCH_DIR = benchmarks/workloads
 ASM_MODULES = entry.asm data.asm runtime.asm tokenize.asm parse.asm \
               calls.asm symbols.asm frames.asm codegen.asm
 
-.PHONY: all clean linux windows-exe test
+.PHONY: all clean linux windows-exe test status site
 
 all: linux
 
@@ -36,6 +36,15 @@ windows-exe: linux
 test: linux
 	./tests/conformance_alpha.sh
 	TARGET=windows ./tests/conformance_alpha.sh
+
+# Regenerate every generated status block (website board, README, progress log) from status/status.json.
+status:
+	python3 status/render.py
+
+# Rebuild the `website` branch that GitHub Pages serves (add PUSH=1 to push it).
+site:
+	python3 status/render.py
+	./tools/publish_site.sh $(if $(PUSH),--push,)
 
 clean:
 	rm -rf $(BUILD_DIR)/*

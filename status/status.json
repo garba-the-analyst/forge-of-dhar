@@ -1,0 +1,137 @@
+{
+  "_about": "THE single source of truth for what Dhar can do today. Edit this file, run `python3 status/render.py`, commit the result. The website board, the README status block, the speed tables and the progress log are generated from it (and from benchmarks/results/*.json), and tests/test_status.py fails if any of them has drifted or if a claim here no longer matches the code. Text fields use `backticks` for code. Statuses: works | partly | designed | notyet. See docs/HONESTY.md for what each word means.",
+
+  "as_of": "2026-10-22",
+
+  "repos": {
+    "forge_of_dhar": { "name": "forge-of-dhar", "role": "Stage 0", "url": "https://github.com/garba-the-analyst/forge-of-dhar" },
+    "honing_dhar":   { "name": "honing-dhar",   "role": "Stage 1", "url": "https://github.com/garba-the-analyst/honing-dhar", "checked_commit": "cfa336b" }
+  },
+
+  "facts": {
+    "battery_total": 64,
+    "battery_targets": ["linux", "windows"],
+    "dharc_modules": 9,
+    "stage1_files": 8
+  },
+
+  "components": [
+    {
+      "id": "stage0", "status": "works", "title": "Stage 0 compiler",
+      "text": "`dharc` is written in NASM x86-64 assembly (nine modules, no libc). It reads a `.dhar` file and writes assembly; `nasm` and a linker turn that into a program. The conformance battery has {battery_total} tests and all of them pass on both targets."
+    },
+    {
+      "id": "native", "status": "works", "title": "Native programs, no runtime",
+      "text": "Output is a small static program that talks to the operating system directly through `sys`. The examples below are about 9 KB each."
+    },
+    {
+      "id": "bounds", "status": "works", "title": "Bounds checking on buffers",
+      "text": "An index outside a `raw[N]` buffer stops the program with `Dhar: index out of bounds` and exit status 1, instead of silently corrupting memory."
+    },
+    {
+      "id": "language", "status": "partly", "title": "The language itself",
+      "text": "A strict first subset: `i32`, `str`, `bool` and `raw[N]`; tasks with parameters; `give` with a value or one operation (`give a + b`); `when`/`shift`/`fallback`; loops; `sys` calls; layout-only `mold`. Anything outside the subset is rejected with a clear message."
+    },
+    {
+      "id": "target_linux", "status": "works", "title": "Target: Linux x86-64",
+      "text": "Programs are built, linked and run natively in the tests."
+    },
+    {
+      "id": "target_windows", "status": "partly", "title": "Target: Windows x64",
+      "text": "Programs assemble as win64, link into a PE, and run correctly in a CPU emulator that checks the Windows calling rules; all {battery_total} tests pass there. It has not been run on a real Windows machine yet, and `dharc` itself still runs only on Linux (on Windows, use WSL)."
+    },
+    {
+      "id": "targets_other", "status": "notyet", "title": "Targets: ARM64, RISC-V, WebAssembly (WASI)",
+      "text": "`dharc` refuses these with an error rather than producing the wrong output. They are planned as back ends of the Stage 1 compiler, on the machine-independent IR."
+    },
+    {
+      "id": "stage1", "status": "designed", "title": "Stage 1: the compiler written in Dhar",
+      "text": "{stage1_files} source files exist in the Honing Dhar repository (lexer, parser, AST, symbols, type check, IR, code generation, driver) and all of them pass through Stage 0. They are scaffolding and stubs, not a working compiler."
+    },
+    {
+      "id": "safety", "status": "designed", "title": "Safety without a garbage collector",
+      "text": "Compile-time ownership and borrowing (`view`, `grab`) and the error model (`state`, `trap`, `enforce`) are specified. Stage 0 rejects them; there is no borrow checker yet."
+    },
+    {
+      "id": "direction", "status": "designed", "title": "Cybersecurity, AI and quantum direction",
+      "text": "The direction and its acceptance gates are written down as Canon Amendment A-1, a draft that still needs the author's ratification. Nothing for them is built yet: no `std.crypto`, no float or tensor types, no quantum back end."
+    },
+    {
+      "id": "selfhost", "status": "notyet", "title": "Self-hosting",
+      "text": "Stage 1 does not compile itself, so the byte-for-byte bootstrap check has not been run."
+    },
+    {
+      "id": "optimiser", "status": "notyet", "title": "Optimiser",
+      "text": "Every variable lives in memory and nothing is kept in registers. That is the main reason Dhar trails C in the speed test. Register allocation is planned for after the bootstrap."
+    },
+    {
+      "id": "modules", "status": "notyet", "title": "Modules, standard library, `Kun`",
+      "text": "`pull` and `expose` are validated but link a single file. There is no importer, no standard library and no package manager yet; programs call the system directly."
+    },
+    {
+      "id": "playground", "status": "notyet", "title": "Try Dhar in the browser",
+      "text": "Planned for this website. It needs a way to run `dharc` and the result in the browser, and nothing of that exists yet."
+    }
+  ],
+
+  "pipeline": [
+    { "n": "0", "status": "works",    "title": "Stage 0, the bridge",        "text": "Reads Dhar, writes assembly. The blueprint named C for the bridge; the one that exists is written directly in NASM assembly." },
+    { "n": "1", "status": "designed", "title": "Stage 1, the compiler in Dhar", "text": "The lexer, parser, type checker, IR and code generator, all written in Dhar itself and using only what Stage 0 accepts. Scaffolding exists; the compiler does not yet." },
+    { "n": "2", "status": "notyet",   "title": "Hand-off",                   "text": "Stage 0 compiles the Stage 1 source. The result is the first compiler built from Dhar's own code." },
+    { "n": "3", "status": "notyet",   "title": "Self-host check",            "text": "That compiler compiles the Stage 1 source again. If the logic is sound, the two executables are byte-for-byte identical." },
+    { "n": "4", "status": "notyet",   "title": "Independence",               "text": "Stage 0 is archived. After that, optimisation, a standard library and tooling are built on Dhar itself." }
+  ],
+
+  "backends": [
+    { "name": "x86-64 Linux",   "status": "works" },
+    { "name": "x86-64 Windows", "status": "partly" },
+    { "name": "ARM64",          "status": "designed" },
+    { "name": "RISC-V",         "status": "designed" },
+    { "name": "WebAssembly",    "status": "designed" }
+  ],
+
+  "tracks_intro": "Security first, then AI, then quantum. None of this is built. It starts after Stage 1 compiles itself; until then the work is to leave room for it in the design. Each line below is a gate: a test that must pass before the line is called done.",
+
+  "tracks": [
+    {
+      "order": 1, "id": "security", "name": "Cybersecurity",
+      "why": "Dhar already starts from the right place: no libc, no runtime, a compiler small enough to read, and bounds checks that stop an out-of-range write.",
+      "gates": [
+        { "id": "S1", "status": "partly", "text": "Memory safety floor. Every index is checked (this works today for `raw[N]`), and ownership and borrowing (`view`, `grab`) are enforced at compile time, with no garbage collector." },
+        { "id": "S2", "status": "notyet", "text": "Constant-time code. Values marked secret may not decide a branch or an array index, and the compiler may not rewrite them into one." },
+        { "id": "S3", "status": "notyet", "text": "A first `std.crypto`: SHA-256, ChaCha20-Poly1305, X25519 and Ed25519, each passing its published test vectors (FIPS 180-4, RFC 8439, RFC 7748, RFC 8032) and a timing test that shows no input-dependent variation." },
+        { "id": "S4", "status": "notyet", "text": "A build you can trust. Stage 1 compiles itself byte for byte, two machines produce identical output from the same source, and every build lists what went into it." }
+      ]
+    },
+    {
+      "order": 2, "id": "ai", "name": "Artificial intelligence",
+      "why": "Models are numbers in arrays. A language with checked bounds, no garbage collector and no runtime can run them with a memory use that is known before they start.",
+      "gates": [
+        { "id": "A1", "status": "notyet", "text": "Numbers for models: `f32` and `f64`, fixed-point, and SIMD vector types, with results checked against a reference implementation." },
+        { "id": "A2", "status": "notyet", "text": "Tensors without a garbage collector: fixed-shape arrays and views with checked bounds, and arena allocation." },
+        { "id": "A3", "status": "notyet", "text": "Inference end to end: a small trained network (a handwritten-digit classifier) runs from a Dhar program with no outside runtime, and its outputs match a reference framework to a stated tolerance." },
+        { "id": "A4", "status": "notyet", "text": "Measured speed: the gap to optimised C on matrix multiply and on that network is published, whatever it is. GPUs and other accelerators come after this, not before." }
+      ]
+    },
+    {
+      "order": 3, "id": "quantum", "name": "Quantum computing",
+      "why": "Two separate needs: protecting today's data from future quantum computers, which needs no quantum hardware, and describing and simulating quantum programs.",
+      "gates": [
+        { "id": "Q1", "status": "notyet", "text": "Post-quantum cryptography: ML-KEM (FIPS 203), ML-DSA (FIPS 204) and SLH-DSA (FIPS 205), each passing the NIST known-answer tests." },
+        { "id": "Q2", "status": "notyet", "text": "Circuits as data: a Dhar program builds a quantum circuit and writes it as OpenQASM 3 that a reference tool accepts." },
+        { "id": "Q3", "status": "notyet", "text": "A state-vector simulator written in Dhar, checked against a reference simulator on a fixed set of circuits." },
+        { "id": "Q4", "status": "notyet", "text": "Real quantum hardware stays out of scope until Q2 and Q3 pass and a provider's interface allows it." }
+      ]
+    }
+  ],
+
+  "milestones": [
+    { "date": "2026-10-22", "title": "Windows x64 target", "text": "Stage 0 emits real Windows programs; unsupported targets are refused instead of silently producing Linux code. The battery grew to 64 tests and passes on both targets." },
+    { "date": "2026-10-22", "title": "Two Stage 0 bugs fixed", "text": "`give a + b` used to return only `a`; `gen(\"...\")` used to write an extra zero byte. Both fixed, with 14 tests that fail on the old compiler." },
+    { "date": "2026-10-22", "title": "Direction written down", "text": "Canon Amendment A-1, a draft awaiting ratification, proposes the order: cybersecurity, then artificial intelligence, then quantum computing, each with test gates. Nothing for them is built yet." },
+    { "date": "2026-10-22", "title": "Honest status in one place", "text": "One status file now drives the website, the README and the progress log, and a test fails if any of them drifts from it." },
+    { "date": "2026-10-21", "title": "Website and logo", "text": "The DHAR logo and brand rules were fixed (six colours, two typefaces), and the first version of this site was built with code samples run on the real compiler. Running them also exposed the two Stage 0 bugs fixed on 22 October." },
+    { "date": "2026-10-19", "title": "Test battery at 45", "text": "Positive coverage added for `gen`, `give` and `expose`." },
+    { "date": "2026-10-18", "title": "Stage 0 split into nine modules", "text": "The monolithic source was divided into one-definition-per-file modules." }
+  ]
+}

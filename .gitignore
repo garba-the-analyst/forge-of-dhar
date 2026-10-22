@@ -8,4 +8,6 @@ output.asm
 
 # Executables
 dharc
-output
+output__pycache__/
+*.pyc
+dist/
