@@ -145,6 +145,112 @@ section .data
     len_asm_resq_base equ $ - asm_resq_base
     asm_text db 10, "section .text", 10, "    global _start", 10, "_start:", 10, "    call dhar_core", 10, "    mov rax, 60", 10, "    xor rdi, rdi", 10, "    syscall", 10, 10
     len_asm_text equ $ - asm_text
+    ; Phase 2: Windows x64 (PE32+) program header and runtime stub, used with --target=windows.
+    asm_text_win:
+    db "section .text", 10
+    db "    global main", 10
+    db "    extern GetStdHandle", 10
+    db "    extern WriteFile", 10
+    db "    extern ReadFile", 10
+    db "    extern ExitProcess", 10
+    db "main:", 10
+    db "    sub rsp, 40", 10
+    db "    call dhar_core", 10
+    db "    mov rax, 60", 10
+    db "    xor rdi, rdi", 10
+    db "    call dhar_rt_syscall", 10
+    db "; ---- Dhar Windows runtime (Stage 0): the portable subset of sys ----", 10
+    db "; Linux numbers 0 (read), 1 (write), 60 (exit) are mapped to the Win32 calls.", 10
+    db "; Any other number returns -38 (ENOSYS). Preserves everything except rax, rcx, r11.", 10
+    db "dhar_rt_syscall:", 10
+    db "    push rbp", 10
+    db "    mov rbp, rsp", 10
+    db "    push rdx", 10
+    db "    push r8", 10
+    db "    push r9", 10
+    db "    push r10", 10
+    db "    push rbx", 10
+    db "    push r12", 10
+    db "    push r13", 10
+    db "    mov r12, rsp", 10
+    db "    and rsp, -16", 10
+    db "    sub rsp, 48", 10
+    db "    cmp rax, 1", 10
+    db "    je .rt_write", 10
+    db "    cmp rax, 0", 10
+    db "    je .rt_read", 10
+    db "    cmp rax, 60", 10
+    db "    je .rt_exit", 10
+    db "    mov rax, -38", 10
+    db "    jmp .rt_ret", 10
+    db ".rt_write:", 10
+    db "    mov r13, rsi", 10
+    db "    mov rbx, rdx", 10
+    db "    cmp rdi, 1", 10
+    db "    je .rt_w_out", 10
+    db "    cmp rdi, 2", 10
+    db "    je .rt_w_err", 10
+    db "    jmp .rt_badfd", 10
+    db ".rt_w_out:", 10
+    db "    mov ecx, -11", 10
+    db "    jmp .rt_w_go", 10
+    db ".rt_w_err:", 10
+    db "    mov ecx, -12", 10
+    db ".rt_w_go:", 10
+    db "    call GetStdHandle", 10
+    db "    mov rcx, rax", 10
+    db "    mov rdx, r13", 10
+    db "    mov r8, rbx", 10
+    db "    lea r9, [rsp+40]", 10
+    db "    mov qword [rsp+32], 0", 10
+    db "    call WriteFile", 10
+    db "    test eax, eax", 10
+    db "    jz .rt_io_err", 10
+    db "    mov eax, dword [rsp+40]", 10
+    db "    jmp .rt_ret", 10
+    db ".rt_read:", 10
+    db "    mov r13, rsi", 10
+    db "    mov rbx, rdx", 10
+    db "    test rdi, rdi", 10
+    db "    jnz .rt_badfd", 10
+    db "    mov ecx, -10", 10
+    db "    call GetStdHandle", 10
+    db "    mov rcx, rax", 10
+    db "    mov rdx, r13", 10
+    db "    mov r8, rbx", 10
+    db "    lea r9, [rsp+40]", 10
+    db "    mov qword [rsp+32], 0", 10
+    db "    call ReadFile", 10
+    db "    test eax, eax", 10
+    db "    jz .rt_io_err", 10
+    db "    mov eax, dword [rsp+40]", 10
+    db "    jmp .rt_ret", 10
+    db ".rt_badfd:", 10
+    db "    mov rax, -9", 10
+    db "    jmp .rt_ret", 10
+    db ".rt_io_err:", 10
+    db "    mov rax, -5", 10
+    db "    jmp .rt_ret", 10
+    db ".rt_exit:", 10
+    db "    mov ecx, edi", 10
+    db "    call ExitProcess", 10
+    db ".rt_ret:", 10
+    db "    mov rsp, r12", 10
+    db "    pop r13", 10
+    db "    pop r12", 10
+    db "    pop rbx", 10
+    db "    pop r10", 10
+    db "    pop r9", 10
+    db "    pop r8", 10
+    db "    pop rdx", 10
+    db "    pop rbp", 10
+    db "    ret", 10
+    db "", 10
+    len_asm_text_win equ $ - asm_text_win
+    asm_syscall_win db "    call dhar_rt_syscall", 10
+    len_asm_syscall_win equ $ - asm_syscall_win
+    msg_err_target db "Fatal Error: unsupported target. Stage 0 implements --target=linux and --target=windows only (arm64, riscv64 and wasi are planned for the Stage 1 backends)", 10, 0
+    len_err_target equ $ - msg_err_target
     
     asm_call db "    call "
     len_asm_call equ $ - asm_call
@@ -391,6 +497,10 @@ section .bss
     indent_count resw 1             
     current_indent resw 1
     current_line resd 1
+    cur_syscall_ptr resq 1          ; Phase 2: per-target emission choices, set in run_codegen
+    cur_syscall_len resq 1
+    cur_text_ptr resq 1
+    cur_text_len resq 1
     target_os_flag resq 1           ; 0 = Linux, 1 = Windows PE, 2 = WASI
     last_token_type resb 1          ; V0.3.0 unary-minus detection
 

@@ -2,6 +2,18 @@
 section .text
 
 run_codegen:
+    ; Phase 2: choose the per-target program header and the way `sys` is emitted
+    mov qword [cur_syscall_ptr], asm_syscall
+    mov qword [cur_syscall_len], len_asm_syscall
+    mov qword [cur_text_ptr], asm_text
+    mov qword [cur_text_len], len_asm_text
+    cmp qword [target_os_flag], 1
+    jne .target_chosen
+    mov qword [cur_syscall_ptr], asm_syscall_win
+    mov qword [cur_syscall_len], len_asm_syscall_win
+    mov qword [cur_text_ptr], asm_text_win
+    mov qword [cur_text_len], len_asm_text_win
+.target_chosen:
     mov rax, 1
     mov rdi, 1
     mov rsi, msg_gen_start
@@ -131,8 +143,8 @@ run_codegen:
     jmp .bss_loop
 .bss_done:
 
-    mov rsi, asm_text
-    mov rdx, len_asm_text
+    mov rsi, [cur_text_ptr]
+    mov rdx, [cur_text_len]
     call write_to_file
 
     xor rcx, rcx
@@ -1553,8 +1565,8 @@ run_codegen:
     jmp .sys_emit
 
 .sys_emit:
-    mov rsi, asm_syscall
-    mov rdx, len_asm_syscall
+    mov rsi, [cur_syscall_ptr]
+    mov rdx, [cur_syscall_len]
     call write_to_file
     add rcx, 7
     jmp .text_skip
@@ -1882,8 +1894,8 @@ run_codegen:
     mov rdx, 1
     call write_to_file
 
-    mov rsi, asm_syscall
-    mov rdx, len_asm_syscall
+    mov rsi, [cur_syscall_ptr]
+    mov rdx, [cur_syscall_len]
     call write_to_file
     jmp .text_skip
 .handle_pull:
@@ -2480,8 +2492,8 @@ run_codegen:
     mov rdx, 1
     call write_to_file
 .sys_a_emit:
-    mov rsi, asm_syscall
-    mov rdx, len_asm_syscall
+    mov rsi, [cur_syscall_ptr]
+    mov rdx, [cur_syscall_len]
     call write_to_file
     mov rsi, asm_mov_dest_rax
     mov rdx, len_asm_mov_dest_rax
@@ -2938,8 +2950,8 @@ emit_bounds_trap:
     mov rsi, asm_mov_rdx_trap_len
     mov rdx, len_asm_mov_rdx_trap_len
     call write_to_file
-    mov rsi, asm_syscall
-    mov rdx, len_asm_syscall
+    mov rsi, [cur_syscall_ptr]
+    mov rdx, [cur_syscall_len]
     call write_to_file
     mov rsi, asm_mov_rax_60
     mov rdx, len_asm_mov_rax_60
@@ -2947,8 +2959,8 @@ emit_bounds_trap:
     mov rsi, asm_mov_rdi_one
     mov rdx, len_asm_mov_rdi_one
     call write_to_file
-    mov rsi, asm_syscall
-    mov rdx, len_asm_syscall
+    mov rsi, [cur_syscall_ptr]
+    mov rdx, [cur_syscall_len]
     call write_to_file
     mov rsi, asm_trap_ok_lbl
     mov rdx, len_asm_trap_ok_lbl

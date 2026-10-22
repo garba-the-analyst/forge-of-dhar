@@ -9,27 +9,35 @@ bootstrap_init:                     ; rbx = argv[1] source path, rsi = argv[2] o
     jz .init_compiler_state
 
     mov r13, rsi                    ; argv[2] is target triple flag
-    
+
+    mov rdi, r13
+    mov rdx, str_target_linux
+    call string_compare
+    cmp rax, 1
+    je .init_compiler_state         ; flag stays 0
+
     mov rdi, r13
     mov rdx, str_target_windows
     call string_compare
     cmp rax, 1
     je .set_target_windows
 
-    mov rdi, r13
-    mov rdx, str_target_wasi
-    call string_compare
-    cmp rax, 1
-    je .set_target_wasi
-
-    jmp .init_compiler_state
+    ; Phase 2: anything else (wasi, arm64, riscv64, typos) is refused. Before this, an
+    ; unimplemented target silently produced Linux x86-64 output.
+    mov rax, 87                     ; remove any stale output first
+    mov rdi, out_file
+    syscall
+    mov rax, 1
+    mov rdi, 2
+    mov rsi, msg_err_target
+    mov rdx, len_err_target
+    syscall
+    mov rax, 60
+    mov rdi, 1
+    syscall
 
 .set_target_windows:
     mov qword [target_os_flag], 1
-    jmp .init_compiler_state
-
-.set_target_wasi:
-    mov qword [target_os_flag], 2
     jmp .init_compiler_state
 
 .init_compiler_state:

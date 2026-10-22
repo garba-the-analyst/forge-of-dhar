@@ -3,19 +3,41 @@
 # Positive cases must compile+assemble+link+run with exact checksums;
 # negative cases must fail with exit!=0, a diagnostic on stderr, and no
 # build/output.asm left behind. See PHASE0_BASELINE.md for the gate table.
-# Usage: ./tests/conformance_alpha.sh  (from the repo root; needs nasm/ld/python3)
+# Usage: ./tests/conformance_alpha.sh              Linux x86-64: built, linked and run natively
+#        TARGET=windows ./tests/conformance_alpha.sh   Windows x64: assembled as win64, linked into a PE
+#            with lld-link, run in the CPU emulator tools/pe_emulate.py (needs lld-link, llvm-dlltool,
+#            pip install unicorn pefile). The same expected values apply on both targets.
+# Needs nasm, ld, python3 (run from anywhere; the script changes into the repo root).
 cd "$(dirname "$0")/.." || exit 1
+TARGET=${TARGET:-linux}
+if [ "$TARGET" = windows ]; then
+  mkdir -p build
+  llvm-dlltool -m i386:x86-64 -d tests/kernel32.def -l build/kernel32.lib || exit 1
+fi
+link_prog() { # build/output.asm -> /tmp/c (linux) or /tmp/c.exe (windows); returns 0 on success
+  if [ "$TARGET" = windows ]; then
+    nasm -f win64 build/output.asm -o /tmp/c.obj 2>/dev/null && \
+    lld-link /subsystem:console /entry:main /base:0x400000 /fixed /largeaddressaware:no /nodefaultlib \
+      /out:/tmp/c.exe /tmp/c.obj build/kernel32.lib >/dev/null 2>&1
+  else
+    nasm -f elf64 build/output.asm -o /tmp/c.o 2>/dev/null && ld -m elf_x86_64 -o /tmp/c /tmp/c.o 2>/dev/null
+  fi
+}
+run_prog() { # runs the linked program: stdout to /tmp/c.bin, stderr to $1 (default: discarded)
+  if [ "$TARGET" = windows ]; then timeout 20 python3 tools/pe_emulate.py /tmp/c.exe > /tmp/c.bin 2>"${1:-/dev/null}"
+  else timeout 5 /tmp/c > /tmp/c.bin 2>"${1:-/dev/null}"; fi
+}
 PASS=0; FAIL=0; NOTES=()
 t() { # t <name> <expect:run|reject> <dhar-file-content via stdin>
   local name="$1" expect="$2"
   echo "$3" > /tmp/case.dhar
   rm -f build/output.asm
-  ./build/dharc /tmp/case.dhar --target=linux > /tmp/c.o.txt 2>/tmp/c.e.txt
+  ./build/dharc /tmp/case.dhar --target=$TARGET > /tmp/c.o.txt 2>/tmp/c.e.txt
   local dharc_ec=$?
   local msg; msg=$(strings /tmp/c.e.txt | grep -a -o -m1 "Syntax Error.*\|Semantic Error.*\|Fatal Error.*" | head -c 90)
   if [ "$expect" = run ]; then
-    if [ $dharc_ec -eq 0 ] && [ -s build/output.asm ] && nasm -f elf64 build/output.asm -o /tmp/c.o 2>/dev/null && ld -m elf_x86_64 -o /tmp/c /tmp/c.o 2>/dev/null; then
-      if timeout 5 /tmp/c > /tmp/c.bin 2>/dev/null; then
+    if [ $dharc_ec -eq 0 ] && [ -s build/output.asm ] && link_prog; then
+      if run_prog; then
         local got; got=$(python3 -c "import struct,sys; d=open('/tmp/c.bin','rb').read(); print(struct.unpack('<Q',d[-8:])[0] if len(d)>=8 else len(d))")
         if [ "$got" = "$4" ] && { [ -z "$5" ] || head -c "${#5}" /tmp/c.bin | grep -qF -- "$5"; }; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); NOTES+=("$name: RAN but got $got want $4"); fi
       else FAIL=$((FAIL+1)); NOTES+=("$name: runtime crash"); fi
@@ -146,8 +168,8 @@ task core():
     buf[z] = res
     sys 1, 1, buf, 8' > /tmp/case.dhar
 rm -f build/output.asm
-./build/dharc /tmp/case.dhar --target=linux > /dev/null 2>&1
-nasm -f elf64 build/output.asm -o /tmp/c.o && ld -m elf_x86_64 -o /tmp/c /tmp/c.o && timeout 5 /tmp/c > /tmp/c.bin
+./build/dharc /tmp/case.dhar --target=$TARGET > /dev/null 2>&1
+link_prog && run_prog
 if python3 -c "import sys; d=open('/tmp/c.bin','rb').read(); sys.exit(0 if d==b'xM\x00\x00\x00\x00\x00\x00\x00' else 1)"; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); NOTES+=("gen: wrong bytes"); fi
 echo 'flux buf: raw[8]
 task core():
@@ -157,8 +179,8 @@ task core():
     buf[z] = z
     sys 1, 1, buf, 8' > /tmp/case.dhar
 rm -f build/output.asm
-./build/dharc /tmp/case.dhar --target=linux > /dev/null 2>&1
-nasm -f elf64 build/output.asm -o /tmp/c.o && ld -m elf_x86_64 -o /tmp/c /tmp/c.o && timeout 5 /tmp/c > /tmp/c.bin 2>/tmp/c.err
+./build/dharc /tmp/case.dhar --target=$TARGET > /dev/null 2>&1
+link_prog && run_prog /tmp/c.err
 if [ $? -eq 1 ] && grep -a -q "index out of bounds" /tmp/c.err; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); NOTES+=("oob-trap: no runtime trap"); fi
 t "sysret" run 'flux buf: raw[8]
 task core():
@@ -524,5 +546,13 @@ t "gen-escapes-counted" run 'task core():
     gen("a\tb\n")' 4 'a'
 t "gen-plain" run 'task core():
     gen("abc")' 3 'abc'
-echo "=== RESULT: $PASS passed, $FAIL failed ==="
+# ---- Phase 2: unsupported targets are refused, never silently compiled as Linux ----
+for bad in wasi arm64 riscv64 nonsense; do
+  echo 'task core():
+    gen("x")' > /tmp/case.dhar
+  rm -f build/output.asm
+  ./build/dharc /tmp/case.dhar --target=$bad > /dev/null 2>/tmp/c.e.txt; ec=$?
+  if [ $ec -ne 0 ] && [ ! -f build/output.asm ] && grep -a -q "unsupported target" /tmp/c.e.txt; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); NOTES+=("target-$bad: not refused (ec=$ec)"); fi
+done
+echo "=== RESULT ($TARGET): $PASS passed, $FAIL failed ==="
 for n in "${NOTES[@]}"; do echo "GAP: $n"; done
