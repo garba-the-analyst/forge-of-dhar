@@ -1,0 +1,504 @@
+/*
+ * survey.css: look and feel of the "Shaping Dhar" survey.
+ *
+ * DESIGN IDEA
+ * Dhar's vocabulary is metalwork (forge, mold, alloy, tempering). When steel is
+ * heat-treated, the colour of its surface tells you the temperature: pale straw,
+ * then bronze, then purple, then blue. The one signature element of this page is
+ * that colour run: a thin band that "tempers" from straw to blue as the respondent
+ * moves through the survey. Everything else is kept quiet so the questions can
+ * be read: one typeface (Archivo, a variable font whose width axis gives the
+ * wide, heavy headlines), cool steel greys, no cards, no decoration.
+ *
+ * STRUCTURE
+ *   1. Tokens (colour, type)      6. Likert, scale and grid rows
+ *   2. Base                       7. Text fields and errors
+ *   3. Temper band                8. Buttons, navigation, review panel
+ *   4. Hero                       9. Footer and utilities
+ *   5. Steps and questions       10. Wide screens
+ *
+ * Colours are checked for contrast in both themes (see tests/run_tests.py, which
+ * runs axe-core against light and dark).
+ */
+
+/* ======================================================================== *
+ * 1. Tokens
+ * ======================================================================== */
+
+@font-face {
+  font-family: "Archivo Dhar";
+  src: url("fonts/archivo-subset.woff2") format("woff2");
+  font-weight: 400 800;
+  font-stretch: 100% 125%;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  color-scheme: light dark;
+
+  /* Surfaces and text */
+  --paper: #e9ecef;           /* page: cool steel, not cream */
+  --surface: #ffffff;         /* inputs and option rows */
+  --ink: #182028;
+  --muted: #4d5964;
+  --line: #c2cad1;
+  --line-strong: #7e8a96;
+  --cold: #c9d0d6;            /* steel that has not been heated yet */
+
+  /* Temper colours, in order of heat */
+  --straw: #d4ab45;
+  --bronze: #ad6726;
+  --violet: #6c46a5;
+  --blue: #2a5aa6;
+
+  /* Roles */
+  --accent: #2a5aa6;
+  --accent-ink: #ffffff;
+  --accent-soft: #e0e9f5;
+  --focus: #6c46a5;
+  --danger: #a1241b;
+  --warn-soft: #fbf1d6;
+  --warn-line: #b88a12;
+
+  /* Code sample */
+  --code-bg: #12181e;
+  --code-ink: #dde3e8;
+  --code-type: #8fb6f0;
+  --code-string: #e39a5e;
+
+  --p: 0.1;                   /* progress, 0 to 1, set by survey.js */
+
+  --font: "Archivo Dhar", "Archivo", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #11161b;
+    --surface: #1a222a;
+    --ink: #e6eaee;
+    --muted: #a3afba;
+    --line: #2f3a44;
+    --line-strong: #6a7886;
+    --cold: #2b343c;
+
+    --straw: #e6be62;
+    --bronze: #d98b47;
+    --violet: #a98be0;
+    --blue: #75a5ec;
+
+    --accent: #75a5ec;
+    --accent-ink: #0d141b;
+    --accent-soft: #1c2d45;
+    --focus: #b79cf0;
+    --danger: #ff9a90;
+    --warn-soft: #3a3014;
+    --warn-line: #d9a92b;
+
+    --code-bg: #0b0f13;
+  }
+}
+
+/* ======================================================================== *
+ * 2. Base
+ * ======================================================================== */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+[hidden] { display: none !important; }
+
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font);
+  font-size: 1.0625rem;
+  line-height: 1.55;
+  font-stretch: 100%;
+  overflow-wrap: break-word;
+}
+
+.wrap { max-width: 70rem; margin: 0 auto; padding: 0 1rem; }
+
+:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+
+a { color: var(--accent); }
+
+/* ======================================================================== *
+ * 3. Temper band (progress)
+ * ======================================================================== */
+
+.temper { position: fixed; z-index: 30; top: 0; left: 0; right: 0; height: 6px; background: var(--cold); }
+
+.temper::before {
+  content: "";
+  position: absolute;
+  top: 0; bottom: 0; left: 0;
+  width: calc(var(--p) * 100%);
+  background-image: linear-gradient(to right, var(--straw), var(--bronze), var(--violet), var(--blue));
+  background-size: 100vw 100%;
+  background-repeat: no-repeat;
+  transition: width 0.5s ease;
+}
+
+/* ======================================================================== *
+ * 4. Hero
+ * ======================================================================== */
+
+.hero { padding: 2.25rem 0 1.5rem; }
+
+.title {
+  margin: 0;
+  font-size: clamp(2.75rem, 10vw, 5.25rem);
+  font-weight: 800;
+  font-stretch: 125%;
+  line-height: 0.95;
+  letter-spacing: -0.015em;
+}
+.title span { display: block; }
+
+.lead {
+  margin: 1.25rem 0 0;
+  max-width: 30rem;
+  font-size: 1.375rem;
+  font-weight: 600;
+  font-stretch: 106%;
+  line-height: 1.3;
+}
+
+.intro { max-width: 36rem; margin-top: 1.25rem; }
+.intro p { margin: 0 0 0.9rem; }
+.intro .privacy { color: var(--muted); font-size: 0.9375rem; }
+
+.notice {
+  margin: 1rem 0 0;
+  padding: 0.75rem 1rem;
+  max-width: 36rem;
+  background: var(--surface);
+  border-left: 4px solid var(--violet);
+}
+
+.code {
+  display: none;              /* phones: skip the sample, the questions come first */
+  margin: 1.75rem 0 0;
+  min-width: 0;
+}
+.code pre {
+  margin: 0;
+  padding: 1.25rem 1.4rem;
+  overflow-x: auto;
+  background: var(--code-bg);
+  color: var(--code-ink);
+  border-left: 6px solid var(--bronze);
+  border-radius: 6px;
+  font-family: var(--mono);
+  font-size: 0.9375rem;
+  line-height: 1.65;
+  tab-size: 4;
+}
+.code .k { color: var(--straw); }
+.code .t { color: var(--code-type); }
+.code .s { color: var(--code-string); }
+.code figcaption { margin-top: 0.6rem; color: var(--muted); font-size: 0.875rem; }
+
+/* After the first step the hero shrinks to a title bar, so questions come first. */
+body:not([data-step="start"]) .hero { padding: 1.5rem 0 0.25rem; }
+body:not([data-step="start"]) .title { font-size: 1.25rem; font-stretch: 118%; letter-spacing: 0; }
+body:not([data-step="start"]) .title span { display: inline; }
+body:not([data-step="start"]) .lead,
+body:not([data-step="start"]) .intro,
+body:not([data-step="start"]) .code,
+body:not([data-step="start"]) .notice { display: none; }
+
+/* ======================================================================== *
+ * 5. Steps and questions
+ * ======================================================================== */
+
+#stage { max-width: 46rem; padding-bottom: 1rem; }
+
+.step-head { margin: 0 0 1.75rem; }
+.step-count { margin: 0 0 0.25rem; color: var(--muted); font-size: 0.9375rem; }
+.step-count:empty { display: none; }
+.step-title {
+  margin: 0;
+  font-size: clamp(1.85rem, 6vw, 2.6rem);
+  font-weight: 750;
+  font-stretch: 118%;
+  line-height: 1.05;
+}
+.step-title:focus { outline: none; }
+.step-title:focus-visible { outline: 3px solid var(--focus); outline-offset: 4px; }
+.step-intro { margin: 0.6rem 0 0; color: var(--muted); max-width: 36rem; }
+
+.q { margin: 0 0 2.25rem; }
+
+.q-text {
+  display: flex;
+  gap: 0.75rem;
+  margin: 0 0 0.4rem;
+  font-size: 1.125rem;
+  font-weight: 650;
+  font-stretch: 103%;
+  line-height: 1.35;
+}
+.q-num {
+  flex: 0 0 1.6rem;
+  color: var(--muted);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.q-opt { color: var(--muted); font-size: 0.875rem; font-weight: 400; font-stretch: 100%; margin-left: 0.35rem; }
+.q-hint { margin: 0 0 0.75rem 2.35rem; color: var(--muted); font-size: 0.9375rem; }
+.q-body { margin: 0.6rem 0 0 2.35rem; }
+.q-count { margin: 0.6rem 0 0; color: var(--muted); font-size: 0.9375rem; font-variant-numeric: tabular-nums; }
+
+.q.has-error { border-left: 4px solid var(--danger); padding-left: 0.75rem; margin-left: -0.9rem; }
+
+/* Option rows: native input over a bordered box, so the whole row is the tap target. */
+.opts { display: grid; gap: 0.5rem; }
+.opts.chips { grid-template-columns: repeat(auto-fill, minmax(8.5rem, 1fr)); }
+.opt-group { margin: 0.9rem 0 0.1rem; color: var(--muted); font-size: 0.9375rem; font-weight: 650; }
+.opt-group:first-child { margin-top: 0; }
+.opt-wrap { position: relative; }
+.opt { display: block; position: relative; cursor: pointer; }
+.opt input {
+  position: absolute; left: 0.9rem; top: 0.95rem;
+  width: 1.25rem; height: 1.25rem; margin: 0;
+  accent-color: var(--accent);
+}
+.opt-body {
+  display: block;
+  min-height: 3rem;
+  padding: 0.75rem 0.9rem 0.75rem 2.8rem;
+  background: var(--surface);
+  border: 1.5px solid var(--line-strong);
+  border-radius: 6px;
+}
+.chips .opt-body { padding: 0.65rem 0.8rem 0.65rem 2.6rem; }
+.chips .opt input { left: 0.8rem; top: 0.9rem; }
+.opt:hover .opt-body { border-color: var(--ink); }
+.opt input:checked + .opt-body {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.opt input:focus-visible + .opt-body { outline: 3px solid var(--focus); outline-offset: 2px; }
+.opt input:disabled + .opt-body { opacity: 0.5; cursor: not-allowed; }
+.opt input:disabled:hover + .opt-body { border-color: var(--line-strong); }
+.opt-label { display: block; }
+.opt-hint { display: block; margin-top: 0.15rem; color: var(--muted); font-size: 0.875rem; }
+
+/* Optional detail blocks (one per area the respondent works in). */
+.deep { margin: 0 0 0.75rem; background: var(--surface); border: 1.5px solid var(--line-strong); border-radius: 6px; }
+.deep summary {
+  display: flex; align-items: center; gap: 0.9rem;
+  padding: 0.95rem 1rem;
+  cursor: pointer;
+  font-weight: 650;
+  list-style: none;
+}
+.deep summary::-webkit-details-marker { display: none; }
+.deep summary::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 0.55rem; height: 0.55rem;
+  border-right: 2px solid currentColor; border-bottom: 2px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 0.15s ease;
+}
+.deep[open] summary::before { transform: rotate(45deg); }
+.deep-title { flex: 1 1 auto; }
+.deep-meta { color: var(--muted); font-size: 0.875rem; font-weight: 400; white-space: nowrap; }
+.deep-body { padding: 0 1rem 0.5rem; }
+.deep .q { margin-top: 1.5rem; }
+.deep .q-num { display: none; }
+.deep .q-hint, .deep .q-body { margin-left: 0; }
+.deep .q.has-error { margin-left: 0; }
+
+/* ======================================================================== *
+ * 6. Likert, scale and grid rows
+ * ======================================================================== */
+
+.seg {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  overflow: hidden;
+  background: var(--surface);
+  border: 1.5px solid var(--line-strong);
+  border-radius: 6px;
+}
+.seg-item { position: relative; display: block; cursor: pointer; }
+.seg-item input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.seg-n {
+  display: flex; align-items: center; justify-content: center;
+  min-height: 3rem;
+  border-left: 1.5px solid var(--line);
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+.seg-item:first-child .seg-n { border-left: 0; }
+.seg-item:hover .seg-n { background: var(--accent-soft); }
+.seg-item input:checked + .seg-n { background: var(--accent); color: var(--accent-ink); }
+.seg-item input:focus-visible + .seg-n { outline: 3px solid var(--focus); outline-offset: -3px; }
+
+/* 0 to 10 is eleven choices: separate chips that wrap, not one fused bar. */
+.seg-chips { grid-template-columns: repeat(auto-fit, minmax(2.9rem, 1fr)); gap: 0.4rem; overflow: visible; background: transparent; border: 0; }
+.seg-chips .seg-n { border: 1.5px solid var(--line-strong); border-radius: 6px; background: var(--surface); }
+.seg-chips .seg-item:first-child .seg-n { border-left: 1.5px solid var(--line-strong); }
+.seg-chips .seg-item:hover .seg-n { background: var(--accent-soft); }
+.seg-chips .seg-item input:checked + .seg-n { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+
+.seg-ends { display: flex; justify-content: space-between; gap: 1rem; margin-top: 0.4rem; color: var(--muted); font-size: 0.875rem; }
+.seg-ends .mid { text-align: center; }
+
+.grid-key { margin: 0 0 0.4rem; color: var(--muted); font-size: 0.9375rem; }
+.grid-row { padding: 0.9rem 0; border-top: 1px solid var(--line); }
+.grid-label { margin: 0 0 0.55rem; }
+
+/* ======================================================================== *
+ * 7. Text fields and errors
+ * ======================================================================== */
+
+.field {
+  display: block;
+  width: 100%;
+  padding: 0.7rem 0.85rem;
+  color: inherit;
+  background: var(--surface);
+  border: 1.5px solid var(--line-strong);
+  border-radius: 6px;
+  font: inherit;
+}
+.field:focus { outline: 3px solid var(--focus); outline-offset: 1px; border-color: var(--accent); }
+.field::placeholder { color: var(--muted); opacity: 1; }
+textarea.field { min-height: 7rem; line-height: 1.5; resize: vertical; }
+.field.other { margin-top: 0.4rem; }
+.field.report { min-height: 18rem; font-family: var(--mono); font-size: 0.8125rem; line-height: 1.45; resize: vertical; }
+
+.q-err { margin: 0.5rem 0 0 2.35rem; color: var(--danger); font-weight: 650; font-size: 0.9375rem; }
+.deep .q-err { margin-left: 0; }
+
+/* ======================================================================== *
+ * 8. Buttons, navigation, review panel
+ * ======================================================================== */
+
+.btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-height: 3rem;
+  padding: 0.7rem 1.4rem;
+  border: 1.5px solid var(--accent);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 700;
+  font-stretch: 108%;
+  line-height: 1.2;
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+}
+.btn:hover { background: var(--accent-soft); }
+.btn.primary { background: var(--accent); color: var(--accent-ink); }
+.btn.primary:hover { filter: brightness(1.1); background: var(--accent); }
+.btn.big { min-height: 3.5rem; padding-inline: 2rem; font-size: 1.125rem; }
+
+.nav { display: flex; justify-content: flex-end; gap: 1rem; margin-top: 2.5rem; padding-top: 1.25rem; border-top: 1px solid var(--line); }
+.nav .btn:first-child:not(:last-child) { margin-right: auto; }
+.nav-err { margin: 1.5rem 0 0; padding: 0.7rem 1rem; color: var(--danger); background: var(--surface); border-left: 4px solid var(--danger); font-weight: 650; }
+
+.review-summary { margin: 0 0 1.25rem; font-weight: 600; }
+.preview { margin: 0 0 1.5rem; }
+.preview summary { cursor: pointer; font-weight: 650; padding: 0.5rem 0; }
+.preview .field { margin-top: 0.5rem; }
+
+.send-row { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem 1.5rem; }
+.send-note { margin: 0; flex: 1 1 14rem; color: var(--muted); font-size: 0.9375rem; }
+.send-note:empty { display: none; }
+/* "Prefer to send it yourself?" with the email button, on its own line under the main send button */
+.send-alt { flex: 1 1 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1rem; padding-top: 1rem; border-top: 1px solid var(--line); }
+.send-alt .send-note { flex: 0 1 auto; }
+
+.sent { margin-top: 2rem; padding: 1.25rem 1.25rem 1.5rem; background: var(--surface); border: 1.5px solid var(--accent); border-radius: 6px; }
+.sent:focus { outline: none; }
+.sent:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.sent-title { margin: 0 0 0.75rem; font-size: 1.375rem; font-weight: 750; font-stretch: 112%; }
+.sent-steps { margin: 0 0 1rem; padding-left: 1.25rem; }
+.sent-steps li { margin-bottom: 0.35rem; }
+.warn { margin: 0 0 1.25rem; padding: 0.75rem 1rem; background: var(--warn-soft); border-left: 4px solid var(--warn-line); }
+.note { margin: 0 0 1.25rem; padding: 0.75rem 1rem; background: var(--accent-soft); border-left: 4px solid var(--accent); }
+.sent-lead { margin: 1.25rem 0 0.6rem; font-weight: 600; }
+.actions { display: flex; flex-wrap: wrap; gap: 0.6rem; }
+.sent-manual { margin: 1rem 0 0; color: var(--muted); font-size: 0.9375rem; }
+.sent-done { margin-top: 1.5rem; padding-top: 1.25rem; border-top: 1px solid var(--line); }
+.sent-done p { margin: 0 0 0.9rem; font-weight: 600; }
+
+.link { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; text-decoration: underline; cursor: pointer; }
+
+/* ======================================================================== *
+ * 9. Footer and utilities
+ * ======================================================================== */
+
+.foot { max-width: 46rem; margin-top: 3.5rem; padding: 1.25rem 0 3rem; border-top: 1px solid var(--line); color: var(--muted); font-size: 0.875rem; }
+.foot p { margin: 0 0 0.4rem; }
+
+.sr {
+  position: absolute !important;
+  width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden;
+  clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0;
+}
+/* A heading that is visually hidden must still be focusable for screen readers. */
+.step-title.sr:focus { outline: none; }
+
+.nojs { padding: 1rem 1.25rem; background: var(--surface); border-left: 4px solid var(--danger); }
+
+@media (prefers-reduced-motion: reduce) {
+  .temper::before, .deep summary::before { transition: none; }
+}
+
+/* ======================================================================== *
+ * 10. Wider screens
+ * ======================================================================== */
+
+@media (max-width: 39.99rem) {
+  /* On phones the controls take the full width; the question number stays in the margin. */
+  .q-hint { margin-left: 0; }
+  .q-body { margin-left: 0; }
+  .q-err { margin-left: 0; }
+  .q.has-error { margin-left: 0; }
+  .nav .btn { flex: 1 1 0; }
+}
+
+@media (min-width: 48rem) {
+  .grid-row { display: flex; align-items: center; gap: 1.5rem; }
+  .grid-label { flex: 1 1 auto; margin: 0; }
+  .grid-row .seg { flex: 0 0 19rem; }
+}
+
+@media (min-width: 56rem) {
+  .wrap { padding: 0 2rem; }
+  .hero-inner { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr); gap: 3.5rem; align-items: start; }
+  .code { display: block; margin-top: 0.75rem; }
+  body:not([data-step="start"]) .hero-inner { display: block; }
+}
+
+@media (min-width: 64rem) {
+  /* The band moves to the left edge and fills upward, like a thermometer. */
+  .temper { top: 0; bottom: 0; left: 0; right: auto; width: 12px; height: auto; }
+  .temper::before {
+    top: auto; right: 0; left: 0; bottom: 0;
+    width: auto;
+    height: calc(var(--p) * 100%);
+    background-image: linear-gradient(to top, var(--straw), var(--bronze), var(--violet), var(--blue));
+    background-size: 100% 100vh;
+    background-position: bottom;
+    transition: height 0.5s ease;
+  }
+}
+
+@media (min-width: 64rem) and (prefers-reduced-motion: reduce) {
+  .temper::before { transition: none; }
+}

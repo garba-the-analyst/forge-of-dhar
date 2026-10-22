@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Relay check - Shaping Dhar survey</title>
+  <meta name="color-scheme" content="light dark">
+  <link rel="stylesheet" href="assets/survey.css">
+  <style>
+    #stage { padding-top: 1.5rem; }
+    .check-card { margin: 0 0 1.5rem; padding: 1.25rem; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; }
+    .check-card h2 { margin: 0 0 0.5rem; font-size: 1.25rem; }
+    .check-card p { margin: 0 0 0.9rem; }
+    .verdict { margin: 1rem 0 0; padding: 0.75rem 1rem; border-left: 4px solid var(--line); background: var(--surface); }
+    .verdict.good { border-left-color: var(--accent); }
+    .verdict.bad { border-left-color: var(--danger); }
+    .verdict:empty { display: none; }
+    pre.raw { margin: 0.75rem 0 0; padding: 0.75rem; overflow: auto; font-size: 0.8125rem; background: var(--surface); border: 1px solid var(--line); border-radius: 4px; white-space: pre-wrap; word-break: break-all; }
+    pre.raw:empty { display: none; }
+    dl.status { display: grid; grid-template-columns: max-content 1fr; gap: 0.35rem 1rem; margin: 0 0 1rem; }
+    dl.status dt { font-weight: 650; }
+    dl.status dd { margin: 0; word-break: break-all; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <main id="stage">
+      <h1 class="step-title">Relay check</h1>
+      <p class="step-intro">For the person who runs the survey. This page tests the real route a respondent's browser takes to the relay (relay/Code.gs), from this web address. It is not part of the survey and is not linked from it.</p>
+
+      <section class="check-card" aria-labelledby="h-config">
+        <h2 id="h-config">1. Settings in assets/config.js</h2>
+        <dl class="status" id="config-status"></dl>
+      </section>
+
+      <section class="check-card" aria-labelledby="h-ping">
+        <h2 id="h-ping">2. Is the relay alive?</h2>
+        <p>Opens the relay web address and reads its reply. This checks the deployment (the URL, and "Who has access: Anyone") and that this page is allowed to read the answer.</p>
+        <button type="button" class="btn ghost" id="btn-ping">Check the relay</button>
+        <p class="verdict" id="ping-verdict" role="status"></p>
+        <pre class="raw" id="ping-raw"></pre>
+      </section>
+
+      <section class="check-card" aria-labelledby="h-test">
+        <h2 id="h-test">3. Send a test response</h2>
+        <p>Sends one test message with a tiny PDF through the relay, exactly as the survey does. A message whose subject starts with "[TEST]" should reach the inbox of the account that owns the script within a minute, and a row marked "test-emailed" should appear in the "Shaping Dhar responses" sheet.</p>
+        <button type="button" class="btn primary" id="btn-test">Send a test response</button>
+        <p class="verdict" id="test-verdict" role="status"></p>
+        <pre class="raw" id="test-raw"></pre>
+      </section>
+    </main>
+  </div>
+
+  <script src="assets/config.js"></script>
+  <script>
+    (function () {
+      'use strict';
+      var CONFIG = window.DHAR_CONFIG || {};
+      var URL_OK = typeof CONFIG.relayUrl === 'string' && /^(https:\/\/|http:\/\/(localhost|127\.0\.0\.1)[:\/])/i.test(CONFIG.relayUrl.trim());
+      var RELAY_URL = URL_OK ? CONFIG.relayUrl.trim() : '';
+
+      function $(id) { return document.getElementById(id); }
+      function pad2(n) { return (n < 10 ? '0' : '') + n; }
+
+      function row(dl, name, value) {
+        var dt = document.createElement('dt'), dd = document.createElement('dd');
+        dt.textContent = name;
+        dd.textContent = value;
+        dl.appendChild(dt);
+        dl.appendChild(dd);
+      }
+
+      function showConfig() {
+        var dl = $('config-status');
+        row(dl, 'relayUrl', URL_OK ? RELAY_URL : 'not set (the survey uses the email-draft route only)');
+        row(dl, 'relayToken', CONFIG.relayToken ? 'set (' + CONFIG.relayToken.length + ' characters)' : 'empty (the relay must have its token check switched off)');
+        row(dl, 'relayTimeoutMs', String(CONFIG.relayTimeoutMs || 30000));
+        row(dl, 'this page is served from', window.location.origin === 'null' ? 'a local file' : window.location.origin);
+      }
+
+      function verdict(id, kind, text) {
+        var el = $(id);
+        el.className = 'verdict' + (kind ? ' ' + kind : '');
+        el.textContent = text;
+      }
+
+      function needUrl(prefix) {
+        if (RELAY_URL) { return false; }
+        verdict(prefix + '-verdict', 'bad', 'relayUrl is empty in assets/config.js. Paste the web app URL (ending in /exec) there first.');
+        return true;
+      }
+
+      var CANNOT_READ = 'The browser could not read the relay\'s answer. Usual causes: the URL is wrong or was not copied in full; the deployment is not set to "Execute as: Me" and "Who has access: Anyone"; the web app was not deployed (or not re-deployed as a New version after the code changed); or the network is blocking script.google.com. Open the URL in a new tab: you should see {"ok":true,"service":"shaping-dhar-relay"...}.';
+
+      function ping() {
+        if (needUrl('ping')) { return; }
+        verdict('ping-verdict', '', 'Checking...');
+        $('ping-raw').textContent = '';
+        var t0 = Date.now();
+        window.fetch(RELAY_URL, { method: 'GET', redirect: 'follow', credentials: 'omit', cache: 'no-store', referrerPolicy: 'no-referrer' })
+          .then(function (res) { return res.text().then(function (text) { return { status: res.status, text: text }; }); })
+          .then(function (r) {
+            $('ping-raw').textContent = 'HTTP ' + r.status + '\n' + r.text.slice(0, 600);
+            var data = null;
+            try { data = JSON.parse(r.text); } catch (e) { data = null; }
+            var ms = Date.now() - t0;
+            if (data && data.service === 'shaping-dhar-relay') {
+              verdict('ping-verdict', 'good', 'The relay is alive and this page can read its answer (' + ms + ' ms). Relay version ' + data.version + ', protocol ' + data.protocol + '.');
+            } else {
+              verdict('ping-verdict', 'bad', 'Something answered, but it is not the relay. Check that relayUrl is the web app URL of this script.');
+            }
+          }, function () { verdict('ping-verdict', 'bad', CANNOT_READ); });
+      }
+
+      function randomId(n) {
+        var chars = 'abcdefghijklmnopqrstuvwxyz0123456789', out = '', buf = new Uint8Array(n), i;
+        (window.crypto || window.msCrypto).getRandomValues(buf);
+        for (i = 0; i < n; i++) { out += chars.charAt(buf[i] % 36); }
+        return out;
+      }
+
+      function newId(d) {
+        return 'dhar-' + d.getFullYear() + pad2(d.getMonth() + 1) + pad2(d.getDate()) + '-' + pad2(d.getHours()) + pad2(d.getMinutes()) + pad2(d.getSeconds()) + '-' + randomId(6);
+      }
+
+      /* A valid one-page PDF with correct byte offsets. */
+      function tinyPdfBase64() {
+        var objects = [
+          '<< /Type /Catalog /Pages 2 0 R >>',
+          '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+          '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 120] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>',
+          null,
+          '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'
+        ];
+        var stream = 'BT /F1 14 Tf 20 60 Td (Shaping Dhar relay check) Tj ET';
+        objects[3] = '<< /Length ' + stream.length + ' >>\nstream\n' + stream + '\nendstream';
+        var out = '%PDF-1.4\n', offsets = [], i;
+        for (i = 0; i < objects.length; i++) { offsets.push(out.length); out += (i + 1) + ' 0 obj\n' + objects[i] + '\nendobj\n'; }
+        var xref = out.length;
+        out += 'xref\n0 ' + (objects.length + 1) + '\n0000000000 65535 f \n';
+        for (i = 0; i < offsets.length; i++) { out += ('0000000000' + offsets[i]).slice(-10) + ' 00000 n \n'; }
+        out += 'trailer\n<< /Size ' + (objects.length + 1) + ' /Root 1 0 R >>\nstartxref\n' + xref + '\n%%EOF\n';
+        return window.btoa(out);
+      }
+
+      var EXPLAIN = {
+        forbidden: 'The relay refused the token. relayToken in assets/config.js must equal CONFIG.TOKEN in the script, and the new version must be deployed.',
+        'bad-request': 'The relay did not understand the request. The script and the page may be at different versions: re-deploy the script from relay/Code.gs.',
+        quota: 'Google\'s daily mail limit is used up, or nearly. Try again tomorrow.',
+        'too-many': 'The hourly limit was reached.',
+        busy: 'The relay was busy. Try again.',
+        server: 'The relay hit an error. In the script editor, open Executions to see the error message.'
+      };
+
+      function sendTest() {
+        if (needUrl('test')) { return; }
+        var btn = $('btn-test');
+        btn.disabled = true;
+        verdict('test-verdict', '', 'Sending...');
+        $('test-raw').textContent = '';
+        var id = newId(new Date()), t0 = Date.now();
+        var body = JSON.stringify({
+          v: 1, token: CONFIG.relayToken || '', id: id, test: true,
+          subject: 'Shaping Dhar survey response: relay check',
+          text: 'SHAPING DHAR SURVEY RESPONSE\nSurvey version: relay-check\nRoles: none\nResponse ID: ' + id + '\n\n== END OF RESPONSE ==',
+          replyTo: '',
+          pdf: { name: 'shaping-dhar-relay-check.pdf', data: tinyPdfBase64() }
+        });
+        window.fetch(RELAY_URL, {
+          method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: body,
+          redirect: 'follow', credentials: 'omit', cache: 'no-store', referrerPolicy: 'no-referrer'
+        }).then(function (res) { return res.text().then(function (text) { return { status: res.status, text: text }; }); })
+          .then(function (r) {
+            $('test-raw').textContent = 'HTTP ' + r.status + '\n' + r.text.slice(0, 600);
+            var data = null;
+            try { data = JSON.parse(r.text); } catch (e) { data = null; }
+            var ms = Date.now() - t0;
+            if (data && data.ok === true) {
+              verdict('test-verdict', 'good', 'Accepted in ' + ms + ' ms. Look in the inbox of the account that owns the script for a message starting "[TEST] Shaping Dhar survey response" with a PDF attached (check Spam once, and create the Gmail filter from relay/SETUP.md so real responses never land there).' + (data.attached === false ? ' The PDF was not attached: ' + (data.note || 'unknown reason') + '.' : '') +
+                (data.logged === true ? ' A row marked "test-emailed" was added to the log sheet.' : (data.logged === false ? ' The log sheet was NOT written: open Executions in the script editor to see why.' : '')));
+            } else if (data) {
+              verdict('test-verdict', 'bad', 'The relay answered but said no: ' + (data.code || 'unknown') + '. ' + (EXPLAIN[data.code] || data.message || ''));
+            } else {
+              verdict('test-verdict', 'bad', 'The relay answered with something that is not JSON (HTTP ' + r.status + '). It is probably a Google sign-in or error page: set "Who has access" to Anyone and deploy a New version.');
+            }
+          }, function () { verdict('test-verdict', 'bad', CANNOT_READ); })
+          .then(function () { btn.disabled = false; });
+      }
+
+      showConfig();
+      $('btn-ping').addEventListener('click', ping);
+      $('btn-test').addEventListener('click', sendTest);
+    })();
+  </script>
+</body>
+</html>

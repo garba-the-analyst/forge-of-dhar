@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Shaping Dhar survey</title>
+  <meta name="description" content="A survey for lecturers, researchers, students and developers about Dhar, a new systems programming language built independently in Nigeria. Takes 8 to 12 minutes.">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#e9ecef" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#11161b" media="(prefers-color-scheme: dark)">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Shaping Dhar: a survey for lecturers, researchers, students and developers">
+  <meta property="og:description" content="Help decide how a new, independently built African systems language is taught and built. 8 to 12 minutes.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%2312181e'/%3E%3Crect x='7' y='6' width='4' height='20' fill='%23d4ab45'/%3E%3Crect x='14' y='6' width='4' height='20' fill='%23ad6726'/%3E%3Crect x='21' y='6' width='4' height='20' fill='%236c46a5'/%3E%3C/svg%3E">
+  <link rel="preload" href="assets/fonts/archivo-subset.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="assets/survey.css">
+</head>
+
+<body data-step="start">
+
+  <div class="wrap">
+
+    <header class="hero">
+      <!-- Progress, drawn as a band of heat-treated steel (see survey.css). It is fixed to the screen edge,
+           so where it sits in the markup does not matter; it lives in the header so it belongs to a landmark. -->
+      <div class="temper" id="temper" role="progressbar" aria-label="Survey progress" aria-valuemin="1" aria-valuemax="5" aria-valuenow="1"></div>
+      <div class="hero-inner">
+        <div class="hero-copy">
+          <h1 class="title"><span>Shaping</span> <span>Dhar</span></h1>
+          <p class="lead">A survey for lecturers, researchers, students and developers.</p>
+          <div class="intro">
+            <p>Dhar is a new systems programming language and toolchain, built independently in Nigeria. It aims for the speed of C, the safety of Java and the readability of Python, with no LLVM or JVM underneath. The goal is a language people can learn, teach, research and build real things in.</p>
+            <p>It takes 8 to 12 minutes, depending on which parts apply to you. Your answers decide what gets built and how it is taught.</p>
+            <p class="privacy" id="privacy">Your answers are emailed to Abdullahi Baba Garba, who leads the project. They are sent from your own email app, so he will see the address you send from, and nothing leaves your device until you press Send there. A PDF copy of your questions and answers is made and saved on your device, and you can attach it to the email. Answers are never published with your name. This page collects nothing itself and loads nothing from other sites.</p>
+          </div>
+          <p class="notice" id="restored" role="status" hidden>Welcome back. Your unfinished answers were restored on this device. <button type="button" class="link" id="restart">Start over</button></p>
+        </div>
+
+        <figure class="code">
+          <pre><code><span class="k">mold</span> <span class="t">Point</span> {
+    <span class="k">flux</span> x: <span class="t">i32</span>
+    <span class="k">flux</span> y: <span class="t">i32</span>
+}
+
+<span class="k">forge</span> <span class="t">Point</span> {
+    <span class="k">task</span> magnitude(): <span class="t">i32</span>
+        <span class="k">give</span> x * x + y * y
+}
+
+<span class="k">task</span> core():
+    gen(<span class="s">"hello, dhar"</span>)</code></pre>
+          <figcaption>Dhar as the language specification (Spec1) defines it today.</figcaption>
+        </figure>
+      </div>
+    </header>
+
+    <main id="stage">
+      <div id="survey">
+        <p class="nojs">This survey needs JavaScript to show the questions that fit your role. Please turn it on, or open this page in a current browser such as Chrome, Firefox, Edge or Safari.</p>
+      </div>
+    </main>
+
+    <footer class="foot">
+      <p id="foot-note">Answers go by email from your own email app. This page sends nothing by itself, and unfinished answers stay on your device.</p>
+      <p><span id="licence"></span> <a id="repo" href="#" hidden>View the source</a></p>
+    </footer>
+
+  </div>
+
+  <div id="live" class="sr" aria-live="polite"></div>
+
+  <script src="assets/config.js"></script>
+  <script src="assets/questions.js"></script>
+  <script src="assets/survey.js"></script>
+  <script>
+    /* Footer text comes from config.js so the repository link lives in one place. */
+    (function () {
+      var c = window.DHAR_CONFIG || {};
+      var l = document.getElementById('licence');
+      var r = document.getElementById('repo');
+      if (l && c.licenseNote) { l.textContent = c.licenseNote + '.'; }
+      if (r && c.repoUrl) { r.href = c.repoUrl; r.hidden = false; }
+    })();
+  </script>
+</body>
+</html>
