@@ -129,6 +129,14 @@ section .data
     len_asm_db_quote equ $ - asm_db_quote
     asm_quote_zero db 96, ", 0", 10
     len_asm_quote_zero equ $ - asm_quote_zero
+    ; Phase 2 (gen fix): every string also gets  str_N_len  = its exact byte count as NASM
+    ; sees it (escapes resolved, terminating NUL excluded), so gen() never writes the NUL.
+    asm_str_len_a db "_len equ $ - str_"
+    len_asm_str_len_a equ $ - asm_str_len_a
+    asm_str_len_b db " - 1", 10
+    len_asm_str_len_b equ $ - asm_str_len_b
+    asm_str_len_ref db "_len"
+    len_asm_str_len_ref equ $ - asm_str_len_ref
     asm_bss db 10, "section .bss", 10
     len_asm_bss equ $ - asm_bss
     asm_resq db " resq 1", 10

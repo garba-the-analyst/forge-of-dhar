@@ -336,8 +336,10 @@ run_parser:
 
 .check_give_stmt:
     ; V0.3.0: 'give' optionally carries one same-line operand.
+    ; Phase 2 (give fix): the operand may be followed by one binary operator and a second
+    ; operand (give a + b). Anything else on the line is rejected instead of silently dropped.
     ; Accounting: leave rcx on LAST consumed token; .next_token supplies the
-    ; final increment (bare = net 1, with operand = net 2).
+    ; final increment (bare = net 1, with operand = net 2, with a op b = net 4).
     mov rax, rcx
     inc rax
     cmp rax, [token_count]
@@ -351,7 +353,9 @@ run_parser:
     je .check_give_operand_ok
     cmp byte [r12], 5               ; number
     je .check_give_operand_ok
-    jmp .next_token
+    cmp byte [r12], 6               ; string literal: consumed by the later token walk
+    je .next_token
+    jmp .err_shape                  ; anything else on the same line (e.g. '-1') is not a value
 .check_give_operand_ok:
     ; reject calls as return values for now (ident followed by '(')
     mov rax, rcx
@@ -360,10 +364,52 @@ run_parser:
     jge .give_consume_operand
     shl rax, 4
     lea r12, [token_array + rax]
+    mov edx, [rbx + 4]
+    cmp edx, [r12 + 4]
+    jne .give_consume_operand       ; next token is on the next line: done
     cmp byte [r12], 3
-    jne .give_consume_operand
+    jne .err_shape                  ; 'give a b': stray token
     cmp byte [r12 + 1], 2           ; '(' -> unsupported call-return
     je .err_give_call
+    cmp byte [r12 + 1], 6           ; + - * / %
+    je .give_tail
+    cmp byte [r12 + 1], 7
+    je .give_tail
+    cmp byte [r12 + 1], 16
+    je .give_tail
+    cmp byte [r12 + 1], 17
+    je .give_tail
+    cmp byte [r12 + 1], 18
+    je .give_tail
+    jmp .err_shape
+.give_tail:
+    ; second operand: identifier or number, on the same line, nothing after it
+    mov rax, rcx
+    add rax, 3
+    cmp rax, [token_count]
+    jge .err_shape
+    shl rax, 4
+    lea r12, [token_array + rax]
+    mov edx, [rbx + 4]
+    cmp edx, [r12 + 4]
+    jne .err_shape
+    cmp byte [r12], 2
+    je .give_tail_end
+    cmp byte [r12], 5
+    jne .err_shape
+.give_tail_end:
+    mov rax, rcx
+    add rax, 4
+    cmp rax, [token_count]
+    jge .give_consume_tail
+    shl rax, 4
+    lea r12, [token_array + rax]
+    mov edx, [rbx + 4]
+    cmp edx, [r12 + 4]
+    je .err_shape                   ; extra tokens after 'a op b'
+.give_consume_tail:
+    add rcx, 3                      ; park on the second operand
+    jmp .next_token
 .give_consume_operand:
     add rcx, 1                      ; point at operand
     jmp .next_token

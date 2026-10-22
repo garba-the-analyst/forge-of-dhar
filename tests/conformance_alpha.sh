@@ -413,5 +413,116 @@ task core():
     flux z: i32 = 1
     buf[z] = z
     sys 1, 1, buf, 8'
+# ---- Phase 2 regression tests: give <a> <op> <b>  (was: "+ b" silently dropped) ----
+t "give-add" run 'flux buf: raw[8]
+task f(a: i32, b: i32):
+    give a + b
+task core():
+    flux z: i32 = 0
+    flux r: i32 = 0
+    r = f(20, 22)
+    buf[z] = r
+    sys 1, 1, buf, 8' 42
+t "give-sub" run 'flux buf: raw[8]
+task f(a: i32, b: i32):
+    give a - b
+task core():
+    flux z: i32 = 0
+    flux r: i32 = 0
+    r = f(50, 8)
+    buf[z] = r
+    sys 1, 1, buf, 8' 42
+t "give-mul" run 'flux buf: raw[8]
+task f(a: i32, b: i32):
+    give a * b
+task core():
+    flux z: i32 = 0
+    flux r: i32 = 0
+    r = f(6, 7)
+    buf[z] = r
+    sys 1, 1, buf, 8' 42
+t "give-div" run 'flux buf: raw[8]
+task f(a: i32, b: i32):
+    give a / b
+task core():
+    flux z: i32 = 0
+    flux r: i32 = 0
+    r = f(294, 7)
+    buf[z] = r
+    sys 1, 1, buf, 8' 42
+t "give-mod" run 'flux buf: raw[8]
+task f(a: i32, b: i32):
+    give a % b
+task core():
+    flux z: i32 = 0
+    flux r: i32 = 0
+    r = f(142, 100)
+    buf[z] = r
+    sys 1, 1, buf, 8' 42
+t "give-lit-lit" run 'flux buf: raw[8]
+task f():
+    give 40 + 2
+task core():
+    flux z: i32 = 0
+    flux r: i32 = 0
+    r = f()
+    buf[z] = r
+    sys 1, 1, buf, 8' 42
+t "give-var-lit" run 'flux buf: raw[8]
+task f(a: i32):
+    give a + 2
+task core():
+    flux z: i32 = 0
+    flux r: i32 = 0
+    r = f(40)
+    buf[z] = r
+    sys 1, 1, buf, 8' 42
+t "give-in-branch" run 'flux buf: raw[8]
+task f(a: i32, b: i32):
+    when a == 1:
+        give a + b
+    give a - b
+task core():
+    flux z: i32 = 0
+    flux r: i32 = 0
+    r = f(1, 41)
+    buf[z] = r
+    sys 1, 1, buf, 8' 42
+t "give-stray-token" reject 'flux buf: raw[8]
+task f(a: i32, b: i32):
+    give a b
+task core():
+    flux z: i32 = 0
+    buf[z] = z
+    sys 1, 1, buf, 8'
+t "give-dangling-op" reject 'flux buf: raw[8]
+task f(a: i32):
+    give a +
+task core():
+    flux z: i32 = 0
+    buf[z] = z
+    sys 1, 1, buf, 8'
+t "give-extra-after-expr" reject 'flux buf: raw[8]
+task f(a: i32, b: i32):
+    give a + b b
+task core():
+    flux z: i32 = 0
+    buf[z] = z
+    sys 1, 1, buf, 8'
+t "give-negative-literal" reject 'flux buf: raw[8]
+task f():
+    give -1
+task core():
+    flux z: i32 = 0
+    buf[z] = z
+    sys 1, 1, buf, 8'
+# ---- Phase 2 regression tests: gen writes exactly the text (was: one extra NUL byte) ----
+# Output shorter than 8 bytes is reported by its LENGTH, so "3" proves no NUL was written.
+t "gen-no-nul" run 'task core():
+    gen("hi\n")' 3 'hi'
+t "gen-escapes-counted" run 'task core():
+    gen("a\tb\n")' 4 'a'
+t "gen-plain" run 'task core():
+    gen("abc")' 3 'abc'
 echo "=== RESULT: $PASS passed, $FAIL failed ==="
 for n in "${NOTES[@]}"; do echo "GAP: $n"; done

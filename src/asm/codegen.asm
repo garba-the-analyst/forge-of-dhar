@@ -54,6 +54,21 @@ run_codegen:
     mov rdx, len_asm_quote_zero
     call write_to_file
 
+    ; gen fix: str_N_len equ $ - str_N - 1
+    mov rsi, asm_str_prefix
+    mov rdx, len_asm_str_prefix
+    call write_to_file
+    mov rax, rcx
+    call write_rax_to_file
+    mov rsi, asm_str_len_a
+    mov rdx, len_asm_str_len_a
+    call write_to_file
+    mov rax, rcx
+    call write_rax_to_file
+    mov rsi, asm_str_len_b
+    mov rdx, len_asm_str_len_b
+    call write_to_file
+
 .data_skip:
     inc rcx
     jmp .data_loop
@@ -1556,12 +1571,159 @@ run_codegen:
     cmp edx, [r12 + 4]
     jne .give_bare_emit
     cmp byte [r12], 2
-    je .give_var
+    je .give_check_binop
     cmp byte [r12], 5
-    je .give_lit
+    je .give_check_binop
     cmp byte [r12], 6
     je .give_str
     jmp .give_bare_emit
+.give_single:
+    cmp byte [r12], 5
+    je .give_lit
+    jmp .give_var
+; Phase 2 (give fix): give <a> <op> <b>  with op in + - * / %  and a, b identifiers or numbers.
+; r12 = operand a, r8 = operator token, r9 = operand b. Result is left in rax, then the usual
+; jump to the task epilogue. (Before this, "+ b" was silently dropped.)
+.give_check_binop:
+    mov rax, rcx
+    add rax, 2
+    cmp rax, [token_count]
+    jge .give_single
+    shl rax, 4
+    lea r8, [token_array + rax]
+    mov edx, [rbx + 4]
+    cmp edx, [r8 + 4]
+    jne .give_single
+    cmp byte [r8], 3
+    jne .give_single
+    cmp byte [r8 + 1], 6
+    je .give_binop
+    cmp byte [r8 + 1], 7
+    je .give_binop
+    cmp byte [r8 + 1], 16
+    je .give_binop
+    cmp byte [r8 + 1], 17
+    je .give_binop
+    cmp byte [r8 + 1], 18
+    je .give_binop
+    jmp .give_single
+.give_binop:
+    mov rax, rcx
+    add rax, 3
+    shl rax, 4
+    lea r9, [token_array + rax]
+    ; load a into rax
+    cmp byte [r12], 5
+    je .gb_a_lit
+    mov rsi, asm_mov_rax_l
+    mov rdx, len_asm_mov_rax_l
+    call write_to_file
+    mov rdi, [r12 + 8]
+    call emit_named_operand
+    mov rsi, asm_close_bracket_nl
+    mov rdx, len_asm_close_bracket_nl
+    call write_to_file
+    jmp .gb_op
+.gb_a_lit:
+    mov rsi, asm_mov_rax_lit
+    mov rdx, len_asm_mov_rax_lit
+    call write_to_file
+    mov rdi, [r12 + 8]
+    call get_strlen
+    mov rdx, rax
+    mov rsi, rdi
+    call write_to_file
+    mov rsi, newline
+    mov rdx, 1
+    call write_to_file
+.gb_op:
+    cmp byte [r8 + 1], 6
+    je .gb_add
+    cmp byte [r8 + 1], 7
+    je .gb_sub
+    ; '*', '/', '%': load b into rcx, apply
+    cmp byte [r9], 5
+    je .gb_b_rcx_lit
+    mov rsi, asm_mov_rcx_l
+    mov rdx, len_asm_mov_rcx_l
+    call write_to_file
+    mov rdi, [r9 + 8]
+    call emit_named_operand
+    mov rsi, asm_close_bracket_nl
+    mov rdx, len_asm_close_bracket_nl
+    call write_to_file
+    jmp .gb_apply
+.gb_b_rcx_lit:
+    mov rsi, asm_mov_rcx_lit
+    mov rdx, len_asm_mov_rcx_lit
+    call write_to_file
+    mov rdi, [r9 + 8]
+    call get_strlen
+    mov rdx, rax
+    mov rsi, rdi
+    call write_to_file
+    mov rsi, newline
+    mov rdx, 1
+    call write_to_file
+.gb_apply:
+    cmp byte [r8 + 1], 16
+    je .gb_mul
+    mov rsi, asm_div_seq
+    mov rdx, len_asm_div_seq
+    call write_to_file
+    cmp byte [r8 + 1], 17
+    je .gb_done
+    mov rsi, asm_mod_fix
+    mov rdx, len_asm_mod_fix
+    call write_to_file
+    jmp .gb_done
+.gb_mul:
+    mov rsi, asm_mul_line
+    mov rdx, len_asm_mul_line
+    call write_to_file
+    jmp .gb_done
+.gb_sub:
+    cmp byte [r9], 5
+    je .gb_sub_lit
+    mov rsi, asm_sub_rax_l
+    mov rdx, len_asm_sub_rax_l
+    call write_to_file
+    jmp .gb_b_var
+.gb_sub_lit:
+    mov rsi, asm_sub_rax_lit
+    mov rdx, len_asm_sub_rax_lit
+    call write_to_file
+    jmp .gb_b_lit
+.gb_add:
+    cmp byte [r9], 5
+    je .gb_add_lit
+    mov rsi, asm_add_rax_l
+    mov rdx, len_asm_add_rax_l
+    call write_to_file
+    jmp .gb_b_var
+.gb_add_lit:
+    mov rsi, asm_add_rax_lit
+    mov rdx, len_asm_add_rax_lit
+    call write_to_file
+.gb_b_lit:
+    mov rdi, [r9 + 8]
+    call get_strlen
+    mov rdx, rax
+    mov rsi, rdi
+    call write_to_file
+    mov rsi, newline
+    mov rdx, 1
+    call write_to_file
+    jmp .gb_done
+.gb_b_var:
+    mov rdi, [r9 + 8]
+    call emit_named_operand
+    mov rsi, asm_close_bracket_nl
+    mov rdx, len_asm_close_bracket_nl
+    call write_to_file
+.gb_done:
+    add rcx, 3                      ; park on operand b; .text_skip supplies the last step
+    jmp .give_emit_jmp
 .give_lit:
     mov rsi, asm_mov_rax_lit
     mov rdx, len_asm_mov_rax_lit
@@ -1706,14 +1868,16 @@ run_codegen:
     mov rsi, asm_mov_rdx_lit
     mov rdx, len_asm_mov_rdx_lit
     call write_to_file
-    ; Get string token byte offset for get_strlen
+    ; gen fix: length comes from the assembler (str_N_len), not from the source text,
+    ; so escapes such as \n count as one byte and the terminating NUL is never written
+    mov rsi, asm_str_prefix
+    mov rdx, len_asm_str_prefix
+    call write_to_file
     mov rax, r14
-    shl rax, 4
-    lea r12, [token_array + rax]
-    mov rdi, [r12 + 8]
-    call get_strlen
-    mov rax, rax
     call write_rax_to_file
+    mov rsi, asm_str_len_ref
+    mov rdx, len_asm_str_len_ref
+    call write_to_file
     mov rsi, newline
     mov rdx, 1
     call write_to_file
