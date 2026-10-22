@@ -1588,7 +1588,32 @@ run_codegen:
     je .give_check_binop
     cmp byte [r12], 6
     je .give_str
-    jmp .give_bare_emit
+    cmp byte [r12], 3               ; '-' N : negative literal
+    jne .give_bare_emit
+    cmp byte [r12 + 1], 7
+    jne .give_bare_emit
+    jmp .give_neg
+.give_neg:
+    mov rax, rcx
+    add rax, 2
+    shl rax, 4
+    lea r13, [token_array + rax]    ; the number token (the parser guarantees it)
+    mov rsi, asm_mov_rax_lit
+    mov rdx, len_asm_mov_rax_lit
+    call write_to_file
+    mov rsi, asm_minus
+    mov rdx, 1
+    call write_to_file
+    mov rdi, [r13 + 8]
+    call get_strlen
+    mov rdx, rax
+    mov rsi, rdi
+    call write_to_file
+    mov rsi, newline
+    mov rdx, 1
+    call write_to_file
+    add rcx, 2                      ; park on the number; .text_skip supplies the last step
+    jmp .give_emit_jmp
 .give_single:
     cmp byte [r12], 5
     je .give_lit

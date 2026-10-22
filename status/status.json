@@ -1,7 +1,7 @@
 {
   "_about": "THE single source of truth for what Dhar can do today. Edit this file, run `python3 status/render.py`, commit the result. The website board, the README status block, the speed tables and the progress log are generated from it (and from benchmarks/results/*.json), and tests/test_status.py fails if any of them has drifted or if a claim here no longer matches the code. Text fields use `backticks` for code. Statuses: works | partly | designed | notyet. See docs/HONESTY.md for what each word means.",
 
-  "as_of": "2026-10-22",
+  "as_of": "2026-10-23",
 
   "repos": {
     "forge_of_dhar": { "name": "forge-of-dhar", "role": "Stage 0", "url": "https://github.com/garba-the-analyst/forge-of-dhar" },
@@ -9,7 +9,7 @@
   },
 
   "facts": {
-    "battery_total": 64,
+    "battery_total": 68,
     "battery_targets": ["linux", "windows"],
     "dharc_modules": 9,
     "stage1_files": 8
@@ -126,6 +126,7 @@
   ],
 
   "milestones": [
+    { "date": "2026-10-23", "title": "Negative literals in `give`", "text": "Checking the Stage 1 sources against the new compiler showed that `give -1` had always compiled as `give 0` (a silent miscompile) and that the first version of the `give` fix rejected it. It now returns the negative number, with {battery_total} tests passing on both targets." },
     { "date": "2026-10-22", "title": "Windows x64 target", "text": "Stage 0 emits real Windows programs; unsupported targets are refused instead of silently producing Linux code. The battery grew to 64 tests and passes on both targets." },
     { "date": "2026-10-22", "title": "Two Stage 0 bugs fixed", "text": "`give a + b` used to return only `a`; `gen(\"...\")` used to write an extra zero byte. Both fixed, with 14 tests that fail on the old compiler." },
     { "date": "2026-10-22", "title": "Direction written down", "text": "Canon Amendment A-1, a draft awaiting ratification, proposes the order: cybersecurity, then artificial intelligence, then quantum computing, each with test gates. Nothing for them is built yet." },

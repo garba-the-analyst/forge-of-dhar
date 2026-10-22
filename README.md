@@ -405,7 +405,7 @@ task core():
 > * `raw[N]` elements are **bytes**: `buf[i] = v` stores the low byte (`mov byte [buf+rax], cl`), `peek` loads one byte zero-extended. This is self-consistent (stores and peeks agree at every index).
 > * Consequence: `buf[0] = res` publishes only `res & 0xFF` (low byte). Full-range `i32` checksums (`-10` → `246`, `338` → `82`) truncate. The `dharfuzz` harness compares full 64-bit (`struct.unpack("<q")`), so full-range random programs report `wrong` even when arithmetic/control/calls are correct. Restrict published values to `0..255` for exact gate parity, or mask expected with `& 0xFF`. See `PHASE0_BASELINE.md` gate table. Multi-byte store is **not** planned in Stage 0 (would break byte-array consistency); it is Stage-1+ design work.
 
-> * **`bool` literals:** `true`/`false` are numeric `1`/`0` (lexer rewrite, shared numeric path): `flux b: bool = true` and `when b == true` pass. The words are reserved and rejected as identifiers. Repeat the battery any time with `tests/conformance_alpha.sh` (64 cases; needs `nasm`/`ld`/`python3`. Run `TARGET=windows ./tests/conformance_alpha.sh` for the Windows target, which also needs `lld-link`, `llvm-dlltool` and `pip install unicorn pefile`; `make test` runs both).
+> * **`bool` literals:** `true`/`false` are numeric `1`/`0` (lexer rewrite, shared numeric path): `flux b: bool = true` and `when b == true` pass. The words are reserved and rejected as identifiers. Repeat the battery any time with `tests/conformance_alpha.sh` (the case count is in the status table; needs `nasm`/`ld`/`python3`. Run `TARGET=windows ./tests/conformance_alpha.sh` for the Windows target, which also needs `lld-link`, `llvm-dlltool` and `pip install unicorn pefile`; `make test` runs both).
 
 ## **🎯 Target Architecture & Cross-Compilation Matrix**
 
@@ -413,7 +413,7 @@ task core():
 
 | Target flag | Object format | Entry point | System bridge | Status |
 | :---- | :---- | :---- | :---- | :---- |
-| `--target=linux` | ELF64 (`nasm -f elf64`) | `_start` | `syscall` instruction | **Works.** All 64 conformance tests run natively. |
+| `--target=linux` | ELF64 (`nasm -f elf64`) | `_start` | `syscall` instruction | **Works.** Every conformance test runs natively. |
 | `--target=windows` | PE32+ (`nasm -f win64`) | `main` | `GetStdHandle`, `WriteFile`, `ReadFile`, `ExitProcess` through a built-in `dhar_rt_syscall` stub (Linux syscall numbers 0, 1 and 60; anything else returns -38) | **Partly.** All 64 tests pass in a CPU emulator (`tools/pe_emulate.py`) that enforces the Windows x64 stack-alignment rule at every call. Not yet run on real Windows. The image is linked at a fixed low base (`/base:0x400000 /fixed /largeaddressaware:no`) because Stage 0 uses absolute 32-bit addresses. `dharc` itself runs only on Linux; on Windows use WSL. |
 | `--target=arm64` | ELF64 AArch64 | | `svc #0` | **Not built.** Planned as a back end of the Stage 1 compiler. |
 | `--target=riscv64` | ELF64 RISC-V | | `ecall` | **Not built.** Planned as a back end of the Stage 1 compiler. |

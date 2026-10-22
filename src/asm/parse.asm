@@ -355,7 +355,33 @@ run_parser:
     je .check_give_operand_ok
     cmp byte [r12], 6               ; string literal: consumed by the later token walk
     je .next_token
-    jmp .err_shape                  ; anything else on the same line (e.g. '-1') is not a value
+    cmp byte [r12], 3               ; '-' followed by a number is a negative literal (give -1)
+    jne .err_shape
+    cmp byte [r12 + 1], 7
+    jne .err_shape
+    mov rax, rcx
+    add rax, 2
+    cmp rax, [token_count]
+    jge .err_shape
+    shl rax, 4
+    lea r12, [token_array + rax]
+    mov edx, [rbx + 4]
+    cmp edx, [r12 + 4]
+    jne .err_shape
+    cmp byte [r12], 5
+    jne .err_shape
+    mov rax, rcx
+    add rax, 3
+    cmp rax, [token_count]
+    jge .give_neg_ok
+    shl rax, 4
+    lea r12, [token_array + rax]
+    mov edx, [rbx + 4]
+    cmp edx, [r12 + 4]
+    je .err_shape                   ; extra tokens after '-N'
+.give_neg_ok:
+    add rcx, 2                      ; park on the number; .next_token supplies the last step
+    jmp .next_token
 .check_give_operand_ok:
     ; reject calls as return values for now (ident followed by '(')
     mov rax, rcx

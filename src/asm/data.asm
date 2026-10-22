@@ -315,6 +315,7 @@ section .data
     len_asm_mov_dest_rax equ $ - asm_mov_dest_rax
     asm_close_rax db "], rax", 10
     len_asm_close_rax equ $ - asm_close_rax
+    asm_minus db "-"
     asm_mov_rax_lit db "    mov rax, "
     len_asm_mov_rax_lit equ $ - asm_mov_rax_lit
     asm_add_rax_l db "    add rax, qword ["

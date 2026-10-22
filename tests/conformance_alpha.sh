@@ -531,9 +531,45 @@ task core():
     flux z: i32 = 0
     buf[z] = z
     sys 1, 1, buf, 8'
-t "give-negative-literal" reject 'flux buf: raw[8]
-task f():
+t "give-negative-literal" run 'flux buf: raw[8]
+task f() -> i32:
     give -1
+task core():
+    flux z: i32 = 0
+    flux r: i32 = 0
+    r = f()
+    r = r + 43
+    buf[z] = r
+    sys 1, 1, buf, 8' 42
+t "give-negative-literal-compare" run 'flux buf: raw[8]
+task f() -> i32:
+    give -5
+task core():
+    flux z: i32 = 0
+    flux r: i32 = 0
+    r = f()
+    when r == -5:
+        buf[z] = 42
+    fallback:
+        buf[z] = 1
+    sys 1, 1, buf, 8' 42
+t "give-negative-name-reject" reject 'flux buf: raw[8]
+task f(a: i32):
+    give -a
+task core():
+    flux z: i32 = 0
+    buf[z] = z
+    sys 1, 1, buf, 8'
+t "give-negative-dangling-reject" reject 'flux buf: raw[8]
+task f():
+    give -
+task core():
+    flux z: i32 = 0
+    buf[z] = z
+    sys 1, 1, buf, 8'
+t "give-negative-extra-reject" reject 'flux buf: raw[8]
+task f():
+    give -1 2
 task core():
     flux z: i32 = 0
     buf[z] = z
