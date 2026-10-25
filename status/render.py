@@ -12,11 +12,14 @@ Run it after editing either, then commit the result:
 
 Generated blocks sit between markers like  <!-- status:board:start -->  and  <!-- status:board:end -->
 (Markdown and HTML comments, so they are invisible when rendered). Never edit inside a block by hand:
-the next run overwrites it. tests/test_status.py runs this with --check, so a stale site, README or
+the next run overwrites it. tests/test_status.py runs this with --check, so a stale README or
 progress log fails the tests.
 
+The website (https://dhar.onrender.com) is in its own repository, Dhar-website-and-docs, which keeps a copy
+of status.json and the benchmark JSON (tools/sync_from_forge.py there) and renders its own pages from them.
+This file no longer writes any website file.
+
 Targets
-    site/index.html        status board, pipeline, back ends, milestones, direction tracks, dates, benchmark data
     README.md              status table, speed table
     benchmarks/README.md   speed table
     PROGRESS.md            status table, speed table, milestone log
@@ -73,8 +76,6 @@ def subst(text, st):
     return re.sub(r"\{(\w+)\}", lambda m: str(st["facts"].get(m.group(1), m.group(0))), text)
 
 
-def code_html(text):
-    return re.sub(r"`([^`]+)`", lambda m: "<code>%s</code>" % m.group(1), html.escape(text, quote=False))
 
 
 def long_date(iso):
@@ -103,58 +104,16 @@ def x1(v):
 
 
 # ----------------------------------------------------------------------------- HTML pieces
-def html_board(st):
-    out = []
-    for c in st["components"]:
-        out.append('      <li data-status="%s">\n        <span class="chip %s">%s</span>\n        <div><h3>%s</h3>\n        <p>%s</p></div>\n      </li>'
-                   % (c["status"], c["status"], LABEL[c["status"]], code_html(c["title"]), code_html(subst(c["text"], st))))
-    return "\n".join(out)
 
 
-def html_rail(st):
-    out = []
-    for p in st["pipeline"]:
-        out.append('      <li class="%s"><span class="node" aria-hidden="true">%s</span><div><h3>%s <span class="chip %s">%s</span></h3>\n        <p>%s</p></div></li>'
-                   % (p["status"], p["n"], code_html(p["title"]), p["status"], LABEL[p["status"]], code_html(p["text"])))
-    return "\n".join(out)
 
 
-def html_backends(st):
-    return "\n".join('<li><span class="chip %s">%s</span></li>' % (b["status"], html.escape(b["name"])) for b in st["backends"])
 
 
-def html_milestones(st):
-    out = []
-    for m in st["milestones"]:
-        out.append('      <li><time datetime="%s">%s</time><div><h3>%s</h3><p>%s</p></div></li>'
-                   % (m["date"], short_date(m["date"]), code_html(m["title"]), code_html(subst(m["text"], st))))
-    return "\n".join(out)
 
 
-def html_tracks(st):
-    out = []
-    for tr in st["tracks"]:
-        gates = "\n".join('          <li><span class="chip %s">%s</span><p><b>%s</b> %s</p></li>'
-                          % (g["status"], LABEL[g["status"]], g["id"], code_html(g["text"])) for g in tr["gates"])
-        out.append('      <article class="track cut">\n        <p class="ord" aria-hidden="true">%d</p>\n        <h3>%s</h3>\n        <p class="why">%s</p>\n        <ul class="gates">\n%s\n        </ul>\n      </article>'
-                   % (tr["order"], html.escape(tr["name"]), code_html(tr["why"]), gates))
-    return "\n".join(out)
 
 
-def bench_json(bench):
-    groups = []
-    for g in ("Compiled ahead of time", "Runtimes"):
-        rows = []
-        for b in bench:
-            if b["group"] != g:
-                continue
-            row = {"name": b["name"], "median": b["median"], "mean": b["mean"], "sd": b["sd"]}
-            if b["us"]:
-                row["us"] = True
-            rows.append(row)
-        groups.append({"label": g, "rows": rows})
-    data = {"source": "forge-of-dhar benchmarks/results/*.json (hyperfine, 100 runs, 3 warm-ups, taskset -c 1)", "groups": groups}
-    return "\n    " + json.dumps(data, indent=1).replace("\n", "\n    ") + "\n    "
 
 
 # ----------------------------------------------------------------------------- Markdown pieces
@@ -165,7 +124,7 @@ def md_status(st):
     lines.append("")
     lines.append("Status checked %s against commit `%s`. Words: **Works** = runs and is tested; **Partly** = some of it runs and is tested; "
                  "**Designed** = specified or scaffolded, not working; **Not yet** = nothing exists. "
-                 "Generated from `status/status.json` (see `docs/HONESTY.md`)." % (long_date(st["as_of"]), forge_commit()))
+                 "Generated from `status/status.json` (see HONESTY.md in the Dhar-website-and-docs repository)." % (long_date(st["as_of"]), forge_commit()))
     return "\n".join(lines)
 
 
@@ -210,23 +169,6 @@ def main():
     st, bench = load_status(), load_bench()
     commit = forge_commit()
     jobs = {}
-
-    # --- site
-    p = "site/index.html"
-    t = open(os.path.join(ROOT, p), encoding="utf-8").read()
-    t = replace_block(t, "status:board", html_board(st))
-    t = replace_block(t, "status:rail", html_rail(st))
-    t = replace_block(t, "status:backends", html_backends(st))
-    t = replace_block(t, "status:milestones", html_milestones(st))
-    t = replace_block(t, "status:tracks", html_tracks(st))
-    t = replace_inline(t, "tracks-intro", code_html(st["tracks_intro"]))
-    t = replace_inline(t, "asof-short", short_date(st["as_of"]))
-    t = replace_inline(t, "asof-long", long_date(st["as_of"]))
-    t = replace_inline(t, "commit-forge", commit)
-    t = replace_inline(t, "commit-honing", st["repos"]["honing_dhar"]["checked_commit"])
-    t = re.sub(r'(<script type="application/json" id="bench-data">).*?(</script>)',
-               lambda m: m.group(1) + bench_json(bench) + m.group(2), t, count=1, flags=re.S)
-    jobs[p] = t
 
     # --- markdown
     for p, blocks in (("README.md", {"status": md_status(st), "speed": md_speed(bench)}),

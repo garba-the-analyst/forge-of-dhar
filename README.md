@@ -9,13 +9,13 @@ This repository is the Stage 0 bridge: its job is to compile Stage 1, the Dhar c
 <!-- gen:status:start -->
 | Area | Status | What it means today |
 | --- | --- | --- |
-| Stage 0 compiler | **Works** | `dharc` is written in NASM x86-64 assembly (nine modules, no libc). It reads a `.dhar` file and writes assembly; `nasm` and a linker turn that into a program. The conformance battery has 64 tests and all of them pass on both targets. |
+| Stage 0 compiler | **Works** | `dharc` is written in NASM x86-64 assembly (nine modules, no libc). It reads a `.dhar` file and writes assembly; `nasm` and a linker turn that into a program. The conformance battery has 106 tests and all of them pass on both targets. |
 | Native programs, no runtime | **Works** | Output is a small static program that talks to the operating system directly through `sys`. The examples below are about 9 KB each. |
 | Bounds checking on buffers | **Works** | An index outside a `raw[N]` buffer stops the program with `Dhar: index out of bounds` and exit status 1, instead of silently corrupting memory. |
-| The language itself | **Partly** | A strict first subset: `i32`, `str`, `bool` and `raw[N]`; tasks with parameters; `give` with a value or one operation (`give a + b`); `when`/`shift`/`fallback`; loops; `sys` calls; layout-only `mold`. Anything outside the subset is rejected with a clear message. |
+| The language itself | **Partly** | A strict first subset: `i32`, `str`, `bool` and `raw[N]`; type inference from the first value (`lock x = 5`); tasks with parameters; `give` with a value or one operation (`give a + b`); `gen(...)` to print a string, a number or an `i32`, `str` or `bool` variable; `when`/`shift`/`fallback`; loops; `sys` calls; layout-only `mold`. Anything outside the subset is rejected with a clear message. Known limit: a global variable cannot have an initial value yet (assign it inside a task); the compiler says so instead of silently ignoring it. |
 | Target: Linux x86-64 | **Works** | Programs are built, linked and run natively in the tests. |
-| Target: Windows x64 | **Partly** | Programs assemble as win64, link into a PE, and run correctly in a CPU emulator that checks the Windows calling rules; all 64 tests pass there. It has not been run on a real Windows machine yet, and `dharc` itself still runs only on Linux (on Windows, use WSL). |
-| Targets: ARM64, RISC-V, WebAssembly (WASI) | **Not yet** | `dharc` refuses these with an error rather than producing the wrong output. They are planned as back ends of the Stage 1 compiler, on the machine-independent IR. |
+| Target: Windows x64 | **Partly** | Programs assemble as win64, link into a PE, and run correctly in a CPU emulator that checks the Windows calling rules; all 106 tests pass there. It has not been run on a real Windows machine yet, and `dharc` itself still runs only on Linux (on Windows, use WSL). |
+| Targets: ARM64, RISC-V, WebAssembly (WASI) | **Not yet** | `dharc` refuses these with an error rather than producing the wrong output. The author decided on 23 October 2026 to build them in Stage 0 itself (not postpone them to Stage 1); nothing of that is built yet, and each target is switched on only when the whole test battery passes on it. The Canon still says Stage 0 targets x86-64 only, so the decision needs Canon amendment A-2. |
 | Stage 1: the compiler written in Dhar | **Designed** | 8 source files exist in the Honing Dhar repository (lexer, parser, AST, symbols, type check, IR, code generation, driver) and all of them pass through Stage 0. They are scaffolding and stubs, not a working compiler. |
 | Safety without a garbage collector | **Designed** | Compile-time ownership and borrowing (`view`, `grab`) and the error model (`state`, `trap`, `enforce`) are specified. Stage 0 rejects them; there is no borrow checker yet. |
 | Cybersecurity, AI and quantum direction | **Designed** | The direction and its acceptance gates are written down as Canon Amendment A-1, a draft that still needs the author's ratification. Nothing for them is built yet: no `std.crypto`, no float or tensor types, no quantum back end. |
@@ -24,10 +24,10 @@ This repository is the Stage 0 bridge: its job is to compile Stage 1, the Dhar c
 | Modules, standard library, `Kun` | **Not yet** | `pull` and `expose` are validated but link a single file. There is no importer, no standard library and no package manager yet; programs call the system directly. |
 | Try Dhar in the browser | **Not yet** | Planned for this website. It needs a way to run `dharc` and the result in the browser, and nothing of that exists yet. |
 
-Status checked 22 October 2026 against commit `471b53f`. Words: **Works** = runs and is tested; **Partly** = some of it runs and is tested; **Designed** = specified or scaffolded, not working; **Not yet** = nothing exists. Generated from `status/status.json` (see `docs/HONESTY.md`).
+Status checked 25 October 2026 against commit `65b5d75`. Words: **Works** = runs and is tested; **Partly** = some of it runs and is tested; **Designed** = specified or scaffolded, not working; **Not yet** = nothing exists. Generated from `status/status.json` (see HONESTY.md in the Dhar-website-and-docs repository).
 <!-- gen:status:end -->
 
-The full dated log is in [PROGRESS.md](PROGRESS.md). The direction (security first, then AI, then quantum) is in [docs/canon/AMENDMENT-A1-DIRECTION.md](docs/canon/AMENDMENT-A1-DIRECTION.md). How these numbers are kept honest is in [docs/HONESTY.md](docs/HONESTY.md).
+The website, the Canon of Dhar, the progress reports and the survey are in [Dhar-website-and-docs](https://github.com/garba-the-analyst/Dhar-website-and-docs) (live at https://dhar.onrender.com). The full dated log is in [PROGRESS.md](PROGRESS.md). The direction (security first, then AI, then quantum) is in [Canon Amendment A-1](https://github.com/garba-the-analyst/Dhar-website-and-docs/blob/main/docs/canon/AMENDMENT-A1-DIRECTION.md). How these numbers are kept honest is in [HONESTY.md](https://github.com/garba-the-analyst/Dhar-website-and-docs/blob/main/docs/HONESTY.md).
 
 ## **📋 Table of Contents**
 
@@ -248,18 +248,14 @@ Dhar replaces standard if/else and while keywords with deterministic execution r
 > * shift: Else-if link (Spec1 §8.1, may repeat). Evaluated only if all previous links failed; exactly one branch of the chain runs. A `shift` without a matching `when`/`shift` at the same indent is a compile-time error, as is a second `fallback:`.  
 > * fallback: Executes if the preceding when check fails.
 ```
-Code snippet  
-flux system\_state: i32 \= 1
-
-when system\_state \== 1:  
-    lock ok\_msg: str \= "System state nominal.\\n"  
-    sys 1, 1, ok\_msg, 22  
-shift system\_state \== 2:  
-    lock warn\_msg: str \= "System state degraded.\\n"  
-    sys 1, 1, warn\_msg, 23  
-fallback:  
-    lock err\_msg: str \= "System error detected.\\n"  
-    sys 1, 1, err\_msg, 23
+task core():
+    flux system_state: i32 = 2
+    when system_state == 1:
+        gen("System state nominal.\n")
+    shift system_state == 2:
+        gen("System state degraded.\n")
+    fallback:
+        gen("System error detected.\n")
 ```
 Conditions compare an identifier against either an integer literal or another variable of the same type. Arithmetic expressions inside conditions (e.g., x + 1 \< 5) are not supported in V0; compute into a variable first. A trailing `:` is required after every `when`/`shift` condition.
 
@@ -267,13 +263,11 @@ Conditions compare an identifier against either an integer literal or another va
 
 > * span: Creates an iterative loop. Evaluates the condition before each loop pass using any supported comparison operator (==, !=, <, >, <=, >=). If true, executes the indented block and jumps back to .L\_START\_.
 ```
-Code snippet  
-flux iter: i32 \= 0
-
-span iter \< 3:  
-    lock loop\_msg: str \= "Executing loop pass...\\n"  
-    sys 1, 1, loop\_msg, 23  
-    iter \= iter \+ 1
+task core():
+    flux iter: i32 = 0
+    span iter < 3:
+        gen("Executing loop pass...\n")
+        iter = iter + 1
 ```
 
 #### **C. cycle Infinite Loops with escape**
@@ -323,11 +317,30 @@ sys \[sys\_number\], \[arg1\], \[arg2\], \[arg3\]
 | arg2 | Second Argument (e.g., Buffer or String Address) | rsi |
 | arg3 | Third Argument (e.g., Byte Count / Buffer Length) | rdx |
 
-#### **Standard Output Example (sys\_write)**
+#### **Printing: gen**
+
+`gen(...)` is the print function. It takes exactly one argument, in parentheses: a string, a number, or the name of an `i32`, `str` or `bool` variable or parameter. The type of a name is whatever it was declared as, or, if it was declared without a type, the type of its first value.
 ```
-Code snippet  
-; sys\_write(fd=1, buf="Hello\\n", len=6)  
-lock msg: str \= "Hello\\n"  
+task core():
+    lock count = 7          ; no type written: the number makes it an i32
+    lock name = "Dhar"      ; a string makes it a str
+    flux ready = true       ; true and false make it a bool
+    gen("Hello from ")
+    gen(name)
+    gen("\n")
+    gen(count)
+    gen("\n")
+    gen(ready)
+    gen("\n")
+```
+This prints `Hello from Dhar`, `7` and `true`, each on its own line. `gen` writes exactly what it is given: a string is written as it is (no newline is added), a number in decimal, a bool as `true` or `false`. It is rejected, with its own message, if the parentheses are missing, if there is more than one argument or anything after the closing parenthesis, or if the name is an array or a task. `gen` writes to standard output only; for any other file descriptor, or to read, use `sys`.
+
+#### **Standard Output with sys (the low-level route)**
+
+`gen` is built on the system call below; use `sys` directly when you need another descriptor, a buffer you built yourself, or the return value.
+```
+; sys_write(fd=1, buf="Hello\n", len=6)
+lock msg: str = "Hello\n"
 sys 1, 1, msg, 6
 ```
 #### **File Input/Output & Capturing Kernel Return Values (sysret)**
@@ -367,18 +380,15 @@ A task represents a discrete execution unit.
 > 2. Tasks are invoked by name followed by parentheses: task\_name().  
 > 3. Task boundaries generate native assembly subroutines (call task\_name and ret).
 ```
-Code snippet  
-task print\_header():  
-    lock header: str \= "--- DHAR SYSTEM ENGINE \---\\n"  
-    sys 1, 1, header, 27
+task print_header():
+    gen("--- DHAR SYSTEM ENGINE ---\n")
 
-task execute\_diagnostics():  
-    lock diag: str \= "Running diagnostics...\\n"  
-    sys 1, 1, diag, 23
+task execute_diagnostics():
+    gen("Running diagnostics...\n")
 
-task core():  
-    print\_header()  
-    execute\_diagnostics()
+task core():
+    print_header()
+    execute_diagnostics()
 ```
 ### **9\. Molds & Forges (layout-only, Spec1 §9)**
 
@@ -391,7 +401,7 @@ task core():
 
 ### **11\. Modules: pull/expose/gen**
 
-> * `gen("...")` is implemented (emits a `sys_write` for the literal).
+> * `gen(...)` is implemented as the print function (see "Printing: gen" above): a string or number literal, `true`/`false`, or the name of an `i32`, `str` or `bool` variable or parameter, declared with a type or inferred. It emits the write itself; a small helper is added to the output only for the kinds a program uses.
 > * `pull <ident|string>` is implemented as a validated directive: the single-file bridge links exactly one file, so it binds nothing (real module resolution is Beta). `expose <ident>` additionally requires a previously declared symbol. Both emit no code. There is no importer, no registry, no `Kun` in Stage 0. Single-file programs with one `task core():` remain the supported unit.
 
 ### **12\. Error Model: state/trap/enforce (not in Stage 0)**
@@ -405,7 +415,7 @@ task core():
 > * `raw[N]` elements are **bytes**: `buf[i] = v` stores the low byte (`mov byte [buf+rax], cl`), `peek` loads one byte zero-extended. This is self-consistent (stores and peeks agree at every index).
 > * Consequence: `buf[0] = res` publishes only `res & 0xFF` (low byte). Full-range `i32` checksums (`-10` → `246`, `338` → `82`) truncate. The `dharfuzz` harness compares full 64-bit (`struct.unpack("<q")`), so full-range random programs report `wrong` even when arithmetic/control/calls are correct. Restrict published values to `0..255` for exact gate parity, or mask expected with `& 0xFF`. See `PHASE0_BASELINE.md` gate table. Multi-byte store is **not** planned in Stage 0 (would break byte-array consistency); it is Stage-1+ design work.
 
-> * **`bool` literals:** `true`/`false` are numeric `1`/`0` (lexer rewrite, shared numeric path): `flux b: bool = true` and `when b == true` pass. The words are reserved and rejected as identifiers. Repeat the battery any time with `tests/conformance_alpha.sh` (the case count is in the status table; needs `nasm`/`ld`/`python3`. Run `TARGET=windows ./tests/conformance_alpha.sh` for the Windows target, which also needs `lld-link`, `llvm-dlltool` and `pip install unicorn pefile`; `make test` runs both).
+> * **`bool` literals:** `true`/`false` are stored as `1`/`0` (lexer rewrite, shared numeric path): `flux b: bool = true` and `when b == true` pass. The lexer remembers that the word was written, so `gen(true)` prints `true` while `gen(1)` prints `1`. The words are reserved and rejected as identifiers. Repeat the battery any time with `tests/conformance_alpha.sh` (the case count is in the status table; needs `nasm`/`ld`/`python3`. Run `TARGET=windows ./tests/conformance_alpha.sh` for the Windows target, which also needs `lld-link`, `llvm-dlltool` and `pip install unicorn pefile`; `make test` runs both).
 
 ## **🎯 Target Architecture & Cross-Compilation Matrix**
 
@@ -414,12 +424,12 @@ task core():
 | Target flag | Object format | Entry point | System bridge | Status |
 | :---- | :---- | :---- | :---- | :---- |
 | `--target=linux` | ELF64 (`nasm -f elf64`) | `_start` | `syscall` instruction | **Works.** Every conformance test runs natively. |
-| `--target=windows` | PE32+ (`nasm -f win64`) | `main` | `GetStdHandle`, `WriteFile`, `ReadFile`, `ExitProcess` through a built-in `dhar_rt_syscall` stub (Linux syscall numbers 0, 1 and 60; anything else returns -38) | **Partly.** All 64 tests pass in a CPU emulator (`tools/pe_emulate.py`) that enforces the Windows x64 stack-alignment rule at every call. Not yet run on real Windows. The image is linked at a fixed low base (`/base:0x400000 /fixed /largeaddressaware:no`) because Stage 0 uses absolute 32-bit addresses. `dharc` itself runs only on Linux; on Windows use WSL. |
-| `--target=arm64` | ELF64 AArch64 | | `svc #0` | **Not built.** Planned as a back end of the Stage 1 compiler. |
-| `--target=riscv64` | ELF64 RISC-V | | `ecall` | **Not built.** Planned as a back end of the Stage 1 compiler. |
-| `--target=wasi` | WebAssembly | `_start` | WASI preview 1 (`fd_write`, `proc_exit`) | **Not built.** Planned as a back end of the Stage 1 compiler. |
+| `--target=windows` | PE32+ (`nasm -f win64`) | `main` | `GetStdHandle`, `WriteFile`, `ReadFile`, `ExitProcess` through a built-in `dhar_rt_syscall` stub (Linux syscall numbers 0, 1 and 60; anything else returns -38) | **Partly.** All 106 tests pass in a CPU emulator (`tools/pe_emulate.py`) that enforces the Windows x64 stack-alignment rule at every call. Not yet run on real Windows. The image is linked at a fixed low base (`/base:0x400000 /fixed /largeaddressaware:no`) because Stage 0 uses absolute 32-bit addresses. `dharc` itself runs only on Linux; on Windows use WSL. |
+| `--target=arm64` | ELF64 AArch64 | | `svc #0` | **Not built.** The author decided on 23 October 2026 to build it in Stage 0; until its whole battery passes, `dharc` refuses the flag. |
+| `--target=riscv64` | ELF64 RISC-V | | `ecall` | **Not built.** The author decided on 23 October 2026 to build it in Stage 0; until its whole battery passes, `dharc` refuses the flag. |
+| `--target=wasi` | WebAssembly | `_start` | WASI preview 1 (`fd_write`, `proc_exit`) | **Not built.** The author decided on 23 October 2026 to build it in Stage 0; until its whole battery passes, `dharc` refuses the flag. |
 
-Why the other architectures wait for Stage 1: Stage 0 turns each token directly into assembly text, with no intermediate form, so a new processor means a second ~2,600-line code generator that would be thrown away once Stage 1 has its machine-independent IR. The plan is in [docs/MULTI-ISA-PLAN.md](docs/MULTI-ISA-PLAN.md).
+The other processors are to be built in Stage 0, not postponed to Stage 1 (the author's decision of 23 October 2026). That has a cost: Stage 0 turns each token directly into assembly text with no intermediate form, so a new processor is a second code generator (the design, in the plan, is one neutral operation line per step and a small assembler-macro file per target), and it is replaced when Stage 1 gets its own back ends on the machine-independent IR. Nothing of it is built yet. Each target is switched on only when the whole conformance battery passes on it, and a target that only passes in an emulator stays **Partly**. The plan is [MULTI-ISA-PLAN.md](https://github.com/garba-the-analyst/Dhar-website-and-docs/blob/main/docs/MULTI-ISA-PLAN.md). Because the Canon's Stage-alpha document still says "x86-64 directly and only", the decision needs Canon amendment A-2; until that is ratified, the code follows the author's instruction and the Canon says otherwise.
 
 ## **🛠️ Building & Compiler CLI Usage**
 

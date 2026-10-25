@@ -9,14 +9,15 @@ the code or with its own single source of truth.
     python3 tests/test_status.py --fast     skips building and running the batteries
 
 What it checks
-  1. Generated blocks (site, README, benchmarks/README, PROGRESS) match status/status.json and
+  1. Generated blocks (README, benchmarks/README, PROGRESS) match status/status.json and
      benchmarks/results/*.json exactly                              -> run `python3 status/render.py`
   2. facts.battery_total in status.json equals the number of tests a real run reports, per target
   3. every status word is one of the four allowed, and every id is unique
-  4. every gate id in status.json is written up in docs/canon/AMENDMENT-A1-DIRECTION.md
+  4. (moved) the check that every gate id is written up in Canon Amendment A-1 now lives with the Canon, in
+     the Dhar-website-and-docs repository (tests/run_tests.py there)
   5. no retired or unverifiable claim has crept back into a public document
-  6. the website links to the survey as the relative path survey/ and never claims a feature as Works that
-     status.json lists as anything else (board labels are generated, so this guards hand edits)
+  6. no document claims that Dhar beats or is faster than C
+  (The website is in the Dhar-website-and-docs repository and is checked there against a copy of status.json.)
 Exit status is 0 only if every check passed.
 """
 import argparse
@@ -63,14 +64,14 @@ RETIRED = [
     ("still emits Linux ELF", "windows/wasi no longer fall back to Linux"),
     ("roughly **5x behind", "mean-only speed framing"),
 ]
-PUBLIC_DOCS = ["README.md", "PROGRESS.md", "benchmarks/README.md", "PHASE0_BASELINE.md", "site/index.html"]
+PUBLIC_DOCS = ["README.md", "PROGRESS.md", "benchmarks/README.md", "PHASE0_BASELINE.md"]
 
 
 def test_generated():
     print("GENERATED BLOCKS")
     r = run([sys.executable, "status/render.py", "--check"])
     print("   " + (r.stdout + r.stderr).strip())
-    check(r.returncode == 0, "site, README, benchmarks/README and PROGRESS match status.json and benchmarks/results")
+    check(r.returncode == 0, "README, benchmarks/README and PROGRESS match status.json and benchmarks/results")
 
 
 def test_vocabulary():
@@ -87,14 +88,6 @@ def test_vocabulary():
     dates = [m["date"] for m in st["milestones"]]
     check(dates == sorted(dates, reverse=True), "milestones are newest first")
     check(all(m["date"] <= st["as_of"] for m in st["milestones"]), "no milestone is dated after as_of")
-    # a gate may not be Works unless its track's component is at least partly done
-    doc = "docs/canon/AMENDMENT-A1-DIRECTION.md"
-    if os.path.exists(os.path.join(ROOT, doc)):
-        text = read(doc)
-        missing = [g for g in gate_ids if not re.search(r"\b%s\b" % g, text)]
-        check(not missing, "every gate id is written up in %s %s" % (doc, missing or ""))
-    else:
-        check(False, "%s exists" % doc)
     return st
 
 
@@ -128,11 +121,8 @@ def test_claims():
         text = read(p)
         bad = [why for phrase, why in RETIRED if phrase in text]
         check(not bad, "%s has no retired claim %s" % (p, bad or ""))
-    site = read("site/index.html")
-    check('href="survey/"' in site and 'href="https://garba-the-analyst.github.io/forge-of-dhar/"' not in site,
-          "site links to the survey as survey/ (relative), not to the old root URL")
     # the speed section must not say 'beats C' or 'faster than C'
-    check(not re.search(r"(beats|faster than) C\b", site + read("README.md")), "no claim that Dhar beats or is faster than C")
+    check(not re.search(r"(beats|faster than) C\b", read("README.md")), "no claim that Dhar beats or is faster than C")
 
 
 def main():

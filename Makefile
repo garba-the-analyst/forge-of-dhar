@@ -9,7 +9,7 @@ BENCH_DIR = benchmarks/workloads
 ASM_MODULES = entry.asm data.asm runtime.asm tokenize.asm parse.asm \
               calls.asm symbols.asm frames.asm codegen.asm
 
-.PHONY: all clean linux windows-exe test status site
+.PHONY: all clean linux windows-exe test status
 
 all: linux
 
@@ -37,14 +37,10 @@ test: linux
 	./tests/conformance_alpha.sh
 	TARGET=windows ./tests/conformance_alpha.sh
 
-# Regenerate every generated status block (website board, README, progress log) from status/status.json.
+# Regenerate every generated status block (README, benchmarks README, progress log) from status/status.json.
+# (The website is in the Dhar-website-and-docs repository; there, tools/sync_from_forge.py copies status.json.)
 status:
 	python3 status/render.py
-
-# Rebuild the `website` branch that GitHub Pages serves (add PUSH=1 to push it).
-site:
-	python3 status/render.py
-	./tools/publish_site.sh $(if $(PUSH),--push,)
 
 clean:
 	rm -rf $(BUILD_DIR)/*
