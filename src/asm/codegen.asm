@@ -532,7 +532,8 @@ run_codegen:
     mov rsi, asm_rbp_prefix
     mov rdx, len_asm_rbp_prefix
     call write_to_file
-    mov rax, r8
+    mov eax, r8d                     ; low 32 bits only: the upper half of r8 is not guaranteed zero
+                                     ; (it used to print rbp-4294967336 for rbp-40; nasm truncated it back)
     call write_rax_to_file
     mov rsi, asm_close_bracket_nl
     mov rdx, len_asm_close_bracket_nl

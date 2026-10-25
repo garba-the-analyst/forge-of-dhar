@@ -123,6 +123,10 @@ def test_claims():
         check(not bad, "%s has no retired claim %s" % (p, bad or ""))
     # the speed section must not say 'beats C' or 'faster than C'
     check(not re.search(r"(beats|faster than) C\b", read("README.md")), "no claim that Dhar beats or is faster than C")
+    # every test count the README states (rendered or hand-written) must be the current battery size
+    want = json.loads(read("status/status.json"))["facts"]["battery_total"]
+    counts = sorted(set(int(n) for n in re.findall(r"\b(\d+) (?:conformance )?tests?\b", read("README.md"))))
+    check(counts == [want], "README.md states only the current test count %d (found %s)" % (want, counts))
 
 
 def main():

@@ -754,6 +754,32 @@ task core():
 t "global-inferred-reject" reject 'flux g = 77
 task core():
     gen(g)'
+# ---- scan over a local buffer: the buffer's address must be a small stack offset ----
+# Regression: the offset was printed from a 64-bit register that held a 32-bit value, giving
+# `lea rsi, [rbp-4294967336]` instead of `[rbp-40]`; nasm warned and truncated, so the output was
+# right by accident. The first test checks the output, the second checks the assembly text itself.
+SCAN_LOCAL='task core():
+    flux z: i32 = 0
+    flux a: i32 = 0
+    flux b: i32 = 0
+    flux c: i32 = 0
+    flux lb: raw[4]
+    flux one: i32 = 1
+    flux four: i32 = 4
+    lb[z] = four
+    lb[one] = one
+    flux u: i32 = 0
+    scan y in lb:
+        u = u + y
+    gen(u)'
+tout "scan-local-buffer-output" '5' "$SCAN_LOCAL"
+echo "$SCAN_LOCAL" > /tmp/case.dhar
+rm -f build/output.asm
+./build/dharc /tmp/case.dhar --target=$TARGET > /dev/null 2>/tmp/c.e.txt; ec=$?
+if [ $ec -eq 0 ] && [ -s build/output.asm ] \
+   && grep -a -q 'lea rsi, \[rbp-40\]' build/output.asm \
+   && ! grep -a -E -q 'rbp-[0-9]{6,}' build/output.asm; then PASS=$((PASS+1));
+else FAIL=$((FAIL+1)); NOTES+=("scan-local-buffer-offset: expected lea rsi, [rbp-40] and no huge rbp offset (ec=$ec; got: $(grep -a -m1 'lea rsi, \[rbp' build/output.asm 2>/dev/null))"); fi
 # ---- Phase 2: unsupported targets are refused, never silently compiled as Linux ----
 for bad in wasi arm64 riscv64 nonsense; do
   echo 'task core():
