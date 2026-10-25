@@ -291,7 +291,7 @@ t "gen-stdout" run 'flux buf: raw[8]
 task core():
     flux res: i32 = 7
     buf[0] = res
-    gen "gen-works\n"
+    gen("gen-works\n")
     sys 1, 1, buf, 8' 7 $'gen-works\n'
 t "pull-bare" reject 'pull
 flux buf: raw[8]
@@ -582,6 +582,178 @@ t "gen-escapes-counted" run 'task core():
     gen("a\tb\n")' 4 'a'
 t "gen-plain" run 'task core():
     gen("abc")' 3 'abc'
+# ---- Phase 3: gen(value) prints strings, numbers and bools, and names declared with or without a type ----
+tout() { # tout <name> <expected standard output exactly> <program>; the program is built, run and compared byte for byte
+  local name="$1" want="$2"
+  echo "$3" > /tmp/case.dhar
+  rm -f build/output.asm
+  ./build/dharc /tmp/case.dhar --target=$TARGET > /dev/null 2>/tmp/c.e.txt
+  local ec=$?
+  if [ $ec -eq 0 ] && [ -s build/output.asm ] && link_prog && run_prog; then
+    if python3 -c "import sys; sys.exit(0 if open('/tmp/c.bin','rb').read()==sys.argv[1].encode() else 1)" "$want"; then PASS=$((PASS+1));
+    else FAIL=$((FAIL+1)); NOTES+=("$name: printed $(head -c 60 /tmp/c.bin | tr '\n' '|') want $(printf '%s' "$want" | tr '\n' '|')"); fi
+  else FAIL=$((FAIL+1)); NOTES+=("$name: failed to build or run (dharc_ec=$ec $(strings /tmp/c.e.txt | grep -a -o -m1 'Syntax Error.*\|Semantic Error.*' | head -c 90))"); fi
+}
+tout "gen-int-literal" '42' 'task core():
+    gen(42)'
+tout "gen-zero" '0' 'task core():
+    gen(0)'
+tout "gen-negative-literal" '-7' 'task core():
+    gen(-7)'
+tout "gen-bool-literals" 'true false' 'task core():
+    gen(true)
+    gen(" ")
+    gen(false)'
+tout "gen-typed-i32" '5' 'task core():
+    lock a: i32 = 5
+    gen(a)'
+tout "gen-inferred-i32" '5' 'task core():
+    lock a = 5
+    gen(a)'
+tout "gen-typed-str" 'typed' 'task core():
+    lock s: str = "typed"
+    gen(s)'
+tout "gen-inferred-str" 'inferred' 'task core():
+    lock s = "inferred"
+    gen(s)'
+tout "gen-typed-bool" 'true false' 'task core():
+    lock a: bool = true
+    lock b: bool = false
+    gen(a)
+    gen(" ")
+    gen(b)'
+tout "gen-inferred-bool" 'true false' 'task core():
+    lock a = true
+    lock b = false
+    gen(a)
+    gen(" ")
+    gen(b)'
+tout "gen-bool-from-number" 'true false' 'task core():
+    lock a: bool = 1
+    lock b: bool = 0
+    gen(a)
+    gen(" ")
+    gen(b)'
+tout "gen-inferred-copy" '9 q true' 'task core():
+    lock a = 9
+    lock b = a
+    lock s = "q"
+    lock t = s
+    lock f = true
+    lock g = f
+    gen(b)
+    gen(" ")
+    gen(t)
+    gen(" ")
+    gen(g)'
+tout "gen-after-arithmetic" '42' 'task core():
+    flux a = 20
+    flux b = 22
+    flux r = 0
+    r = a + b
+    gen(r)'
+tout "gen-i32-extremes" '-2147483648 2147483647 0 -1' 'task core():
+    flux a = -2147483648
+    flux b = 2147483647
+    flux c = 0
+    flux d = -1
+    gen(a)
+    gen(" ")
+    gen(b)
+    gen(" ")
+    gen(c)
+    gen(" ")
+    gen(d)'
+tout "gen-mixed-line" 'n=5, ok=true, who=Dhar
+' 'task core():
+    flux n = 5
+    flux ok = true
+    flux who = "Dhar"
+    gen("n=")
+    gen(n)
+    gen(", ok=")
+    gen(ok)
+    gen(", who=")
+    gen(who)
+    gen("\n")'
+tout "gen-in-loop" '01234' 'task core():
+    flux i = 0
+    span i < 5:
+        gen(i)
+        i = i + 1'
+tout "gen-reassigned-str" 'ab' 'task core():
+    flux s = "a"
+    gen(s)
+    s = "b"
+    gen(s)'
+tout "gen-parameters" '3 x true' 'task show(a: i32, s: str, b: bool):
+    gen(a)
+    gen(" ")
+    gen(s)
+    gen(" ")
+    gen(b)
+task core():
+    flux n = 3
+    flux t = "x"
+    flux f = true
+    show(n, t, f)'
+tout "gen-global-set-in-task" '5' 'flux g: i32
+task core():
+    g = 5
+    gen(g)'
+tout "gen-no-value-no-helpers" 'x' 'task core():
+    gen("x")'
+t "gen-undeclared-reject" reject 'task core():
+    gen(nope)'
+t "gen-raw-buffer-reject" reject 'flux buf: raw[8]
+task core():
+    gen(buf)'
+t "gen-task-name-reject" reject 'task f():
+    give
+task core():
+    gen(f)'
+t "gen-empty-reject" reject 'task core():
+    gen()'
+t "gen-two-values-reject" reject 'task core():
+    gen("a" "b")'
+t "gen-expression-reject" reject 'task core():
+    flux x = 1
+    gen(x + 1)'
+t "gen-no-parentheses-reject" reject 'task core():
+    gen "a"'
+t "gen-unclosed-reject" reject 'task core():
+    gen("a"'
+t "gen-two-on-one-line-reject" reject 'task core():
+    gen("a") gen("b")'
+t "gen-value-on-next-line-reject" reject 'task core():
+    gen(
+    "a")'
+t "inferred-expression-reject" reject 'task core():
+    lock n = 5 + 1
+    gen(n)'
+t "inferred-copy-of-undeclared-reject" reject 'task core():
+    lock n = zz
+    gen(n)'
+t "inferred-self-copy-reject" reject 'task core():
+    lock n = n
+    gen(n)'
+t "inferred-missing-value-reject" reject 'task core():
+    lock n =
+    gen(1)'
+t "inferred-lock-reassign-reject" reject 'task core():
+    lock n = 5
+    n = 7
+    gen(n)'
+t "inferred-redeclared-reject" reject 'task core():
+    lock n = 5
+    lock n = 6
+    gen(n)'
+t "global-initial-value-reject" reject 'flux g: i32 = 77
+task core():
+    gen(g)'
+t "global-inferred-reject" reject 'flux g = 77
+task core():
+    gen(g)'
 # ---- Phase 2: unsupported targets are refused, never silently compiled as Linux ----
 for bad in wasi arm64 riscv64 nonsense; do
   echo 'task core():

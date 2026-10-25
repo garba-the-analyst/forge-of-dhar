@@ -832,7 +832,21 @@ run_codegen:
     jmp .text_skip
 
 .handle_var_decl_cg:
-    mov r14, 3                      
+    mov r14, 3
+    ; Phase 3: inferred form `lock|flux NAME = VALUE`: the '=' is the third token, so the base is 1
+    mov rax, rcx
+    add rax, 2
+    cmp rax, [token_count]
+    jge .var_cg_typed
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 3
+    jne .var_cg_typed
+    cmp byte [r12 + 1], 4
+    jne .var_cg_typed
+    mov r14, 1
+    jmp .var_cg_check_eq
+.var_cg_typed:
     mov rax, rcx
     add rax, 4
     cmp rax, [token_count]
@@ -1852,26 +1866,81 @@ run_codegen:
     add rcx, 1
     jmp .text_skip
 .handle_gen:
-    ; gen("string") - emit sys_write syscall for the string literal
-    mov rax, rcx
-    inc rax
-    cmp rax, [token_count]
-    jge .text_skip
-    shl rax, 4
-    lea r12, [token_array + rax]
-    ; Expect '(' (operator subtype 2)
-    cmp byte [r12], 3
-    jne .text_skip
-    cmp byte [r12 + 1], 2
-    jne .text_skip
-    ; Next should be string literal (type 6)
+    ; gen ( VALUE ). The parser has checked the shape (Phase 3), so the value is the token at rcx + 2.
+    ;   string literal   written directly: sys write of str_N, length str_N_len (no zero byte)
+    ;   number, true/false, or a name: the value goes into rax and a helper prints it by type
+    ;                    (i32: decimal number, str: the text it points to, bool: true or false)
     mov rax, rcx
     add rax, 2
-    cmp rax, [token_count]
-    jge .text_skip
-    ; Save string token index in r14 (not byte offset)
-    mov r14, rax
-    ; Emit sys_write: mov rax,1; mov rdi,1; mov rsi,str; mov rdx,len; syscall
+    mov r14, rax                    ; value token index (survives the emitting calls)
+    shl rax, 4
+    lea r12, [token_array + rax]
+    cmp byte [r12], 6
+    je .gen_string_lit
+    cmp byte [r12], 5
+    je .gen_number
+    ; a name: its type decides how it is printed
+    mov rdi, [r12 + 8]
+    call find_symbol_scoped         ; rdx = symbol (the parser guarantees it exists)
+    movzx eax, byte [rdx + 9]
+    and eax, 0x7F
+    mov [gen_cur_type], al
+    mov rsi, asm_mov_rax_l
+    mov rdx, len_asm_mov_rax_l
+    call write_to_file
+    mov rax, r14
+    shl rax, 4
+    lea r12, [token_array + rax]
+    mov rdi, [r12 + 8]
+    call emit_named_operand
+    mov rsi, asm_close_bracket_nl
+    mov rdx, len_asm_close_bracket_nl
+    call write_to_file
+    jmp .gen_call_helper
+.gen_number:
+    mov byte [gen_cur_type], 1      ; i32
+    cmp byte [r12 + 1], 1           ; written true/false: bool
+    jne .gen_num_load
+    mov byte [gen_cur_type], 14
+.gen_num_load:
+    mov rsi, asm_mov_rax_lit
+    mov rdx, len_asm_mov_rax_lit
+    call write_to_file
+    mov rax, r14
+    shl rax, 4
+    lea r12, [token_array + rax]
+    mov rdi, [r12 + 8]
+    call get_strlen
+    mov rdx, rax
+    mov rsi, rdi
+    call write_to_file
+    mov rsi, newline
+    mov rdx, 1
+    call write_to_file
+.gen_call_helper:
+    cmp byte [gen_cur_type], 2
+    je .gen_call_str
+    cmp byte [gen_cur_type], 14
+    je .gen_call_bool
+    or byte [gen_need], 1
+    mov rsi, asm_call_gen_i32
+    mov rdx, len_asm_call_gen_i32
+    jmp .gen_call_emit
+.gen_call_str:
+    or byte [gen_need], 2
+    mov rsi, asm_call_gen_str
+    mov rdx, len_asm_call_gen_str
+    jmp .gen_call_emit
+.gen_call_bool:
+    or byte [gen_need], 4
+    mov rsi, asm_call_gen_bool
+    mov rdx, len_asm_call_gen_bool
+.gen_call_emit:
+    call write_to_file
+    add rcx, 3                      ; park on ')'
+    jmp .text_skip
+.gen_string_lit:
+    ; Emit sys_write: mov rax,1; mov rdi,1; mov rsi,str; mov rdx,len; syscall   (r14 = the string token)
     mov rsi, asm_mov_rax_lit
     mov rdx, len_asm_mov_rax_lit
     call write_to_file
@@ -1922,6 +1991,7 @@ run_codegen:
     mov rsi, [cur_syscall_ptr]
     mov rdx, [cur_syscall_len]
     call write_to_file
+    add rcx, 3                      ; park on ')'
     jmp .text_skip
 .handle_pull:
     ; `pull <operand>`: validated by the parser; the single-file bridge emits
@@ -2706,6 +2776,7 @@ run_codegen:
     jmp .empty_cf_stack
 
 .write_exit:
+    call emit_gen_helpers           ; Phase 3: the print routines the program calls, if any
     mov rax, 3
     mov rdi, r15
     syscall
@@ -3012,6 +3083,51 @@ emit_bounds_trap:
 ;   rdi = identifier string. Writes the mangled label text for globals, or
 ;   "rbp-<offset>" for task-local symbols. Preserves all caller registers.
 ; ------------------------------------------------------------------------------
+; ------------------------------------------------------------------------------
+; Phase 3 emit_gen_helpers: at the end of the program, add the routines that gen() called
+; (bit 0 i32, bit 1 str, bit 2 bool of gen_need). A program that never prints a value gets none,
+; so its size does not change. The sys call text is the target's own (syscall, or the Windows stub).
+; Touches only rsi and rdx (r15, the output file, is read by write_to_file).
+; ------------------------------------------------------------------------------
+emit_gen_helpers:
+    test byte [gen_need], 1
+    jz .egh_str
+    mov rsi, gen_i32_a
+    mov rdx, len_gen_i32_a
+    call write_to_file
+    mov rsi, [cur_syscall_ptr]
+    mov rdx, [cur_syscall_len]
+    call write_to_file
+    mov rsi, gen_i32_b
+    mov rdx, len_gen_i32_b
+    call write_to_file
+.egh_str:
+    test byte [gen_need], 2
+    jz .egh_bool
+    mov rsi, gen_str_a
+    mov rdx, len_gen_str_a
+    call write_to_file
+    mov rsi, [cur_syscall_ptr]
+    mov rdx, [cur_syscall_len]
+    call write_to_file
+    mov rsi, gen_str_b
+    mov rdx, len_gen_str_b
+    call write_to_file
+.egh_bool:
+    test byte [gen_need], 4
+    jz .egh_done
+    mov rsi, gen_bool_a
+    mov rdx, len_gen_bool_a
+    call write_to_file
+    mov rsi, [cur_syscall_ptr]
+    mov rdx, [cur_syscall_len]
+    call write_to_file
+    mov rsi, gen_bool_b
+    mov rdx, len_gen_bool_b
+    call write_to_file
+.egh_done:
+    ret
+
 emit_named_operand:
     push rax
     push rdi

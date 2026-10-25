@@ -1,6 +1,27 @@
 ; symbols.asm - symbol-table management (StageAlpha 3)
 section .text
 
+; Phase 3 gen_peek: rax = K. Looks at the token K places after rcx (the statement keyword is at rbx).
+; Returns rax = 1 and r12 = that token if it exists and sits on the same line as rbx; else rax = 0.
+; Preserves everything else (rdx is used and restored).
+gen_peek:
+    push rdx
+    add rax, rcx
+    cmp rax, [token_count]
+    jae .gp_no
+    shl rax, 4
+    lea r12, [token_array + rax]
+    mov edx, [rbx + 4]
+    cmp edx, [r12 + 4]
+    jne .gp_no
+    mov eax, 1
+    pop rdx
+    ret
+.gp_no:
+    xor eax, eax
+    pop rdx
+    ret
+
 find_symbol:
     push rcx
     push rbx

@@ -415,6 +415,7 @@ process_current_word:
     mov byte [word_buffer], '1'
     mov byte [word_buffer + 1], 0
     mov qword [word_len], 1
+    mov byte [bool_lit_flag], 1     ; Phase 3: remember it was written true (gen prints "true")
 .not_bool_true:
     mov rdi, word_buffer
     mov rdx, kw_false
@@ -424,6 +425,7 @@ process_current_word:
     mov byte [word_buffer], '0'
     mov byte [word_buffer + 1], 0
     mov qword [word_len], 1
+    mov byte [bool_lit_flag], 1     ; Phase 3: remember it was written false
 .not_bool_false:
 
     call check_numeric
@@ -642,7 +644,8 @@ process_current_word:
 .found_literal:
     call save_string
     mov r8b, 5              
-    mov r9b, 0
+    movzx r9d, byte [bool_lit_flag] ; Phase 3: subtype 1 = the literal was written true/false, else 0
+    mov byte [bool_lit_flag], 0
     mov r10, rax
     call store_token
     jmp .reset_buffer

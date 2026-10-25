@@ -1,5 +1,5 @@
 section .data
-    usage_msg db "Usage: ./build/dharc <source_file.dhar> [--target=linux|windows|wasi]", 10, 0
+    usage_msg db "Usage: ./build/dharc <source_file.dhar> [--target=linux|windows]", 10, 0
     usage_len equ $ - usage_msg
     err_msg db "Error: Could not open source file.", 10, 0
     err_len equ $ - err_msg
@@ -81,7 +81,7 @@ section .data
     len_err_task equ $ - msg_err_task
     msg_err_var_ident db "Syntax Error: Expected Identifier after 'lock'/'flux' on line ", 0
     len_err_var_ident equ $ - msg_err_var_ident
-    msg_err_var_colon db "Syntax Error: Expected ':' after variable identifier on line ", 0
+    msg_err_var_colon db "Syntax Error: Expected ':' and a type, or '=' and a value (the type is inferred), after the name on line ", 0
     len_err_var_colon equ $ - msg_err_var_colon
     msg_err_var_type db "Syntax Error: Expected Type (i32, str, raw) after ':' on line ", 0
     len_err_var_type equ $ - msg_err_var_type
@@ -112,6 +112,13 @@ section .data
     len_err_orphan equ $ - msg_err_orphan
     msg_err_shape db "Syntax Error: malformed statement shape on line ", 0
     len_err_shape equ $ - msg_err_shape
+    ; Phase 3: gen(value). One value in parentheses: a literal or the name of an i32, str or bool.
+    msg_err_gen db "Syntax Error: gen takes one value in parentheses, a literal or the name of an i32, str or bool, on line ", 0
+    len_err_gen equ $ - msg_err_gen
+    msg_err_global_init db "Syntax Error: a name declared outside a task cannot have a starting value in Stage 0; set it inside a task, on line ", 0
+    len_err_global_init equ $ - msg_err_global_init
+    msg_err_gen_type db "Semantic Error: gen prints i32, str and bool values only; this name is a task, buffer or array on line ", 0
+    len_err_gen_type equ $ - msg_err_gen_type
     msg_fatal_full db "Fatal Error: input exceeds compiler capacity (1MB source, 65536 tokens, 32768 symbols, 1MB strings)", 10, 0
     len_fatal_full equ $ - msg_fatal_full
 
@@ -362,6 +369,132 @@ section .data
     asm_syscall db "    syscall", 10
     len_asm_syscall equ $ - asm_syscall
 
+    ; --- Phase 3: gen(value) for i32, str and bool values -------------------------------------------
+    ; gen("text") still writes the literal directly. gen(5), gen(true), gen(name) load the value into
+    ; rax and call a small routine that is added to the end of the program ONLY if the program uses it
+    ; (so programs that do not print values do not change size). Each routine keeps every register
+    ; except rax, writes to standard output (file 1) and uses the target's own sys call text, so it is
+    ; the same on Linux and Windows. No newline is added; write "\n" for one.
+    asm_call_gen_i32 db "    call dhar$gen$i32", 10
+    len_asm_call_gen_i32 equ $ - asm_call_gen_i32
+    asm_call_gen_str db "    call dhar$gen$str", 10
+    len_asm_call_gen_str equ $ - asm_call_gen_str
+    asm_call_gen_bool db "    call dhar$gen$bool", 10
+    len_asm_call_gen_bool equ $ - asm_call_gen_bool
+
+    ; i32: the value in rax, printed as a signed decimal number
+    gen_i32_a:
+    db 10
+    db "; ---- gen: print a signed number (rax) ----", 10
+    db "dhar$gen$i32:", 10
+    db "    push rbx", 10
+    db "    push rcx", 10
+    db "    push rdx", 10
+    db "    push rsi", 10
+    db "    push rdi", 10
+    db "    push r8", 10
+    db "    sub rsp, 48", 10
+    db "    lea rsi, [rsp + 48]", 10
+    db "    mov r8, rax", 10
+    db "    mov rbx, rax", 10
+    db "    test rbx, rbx", 10
+    db "    jns .pos", 10
+    db "    neg rbx", 10
+    db ".pos:", 10
+    db "    mov rax, rbx", 10
+    db "    mov rcx, 10", 10
+    db ".digit:", 10
+    db "    xor edx, edx", 10
+    db "    div rcx", 10
+    db "    add dl, 48", 10
+    db "    dec rsi", 10
+    db "    mov [rsi], dl", 10
+    db "    test rax, rax", 10
+    db "    jnz .digit", 10
+    db "    test r8, r8", 10
+    db "    jns .unsigned", 10
+    db "    dec rsi", 10
+    db "    mov byte [rsi], 45", 10
+    db ".unsigned:", 10
+    db "    lea rdx, [rsp + 48]", 10
+    db "    sub rdx, rsi", 10
+    db "    mov rax, 1", 10
+    db "    mov rdi, 1", 10
+    len_gen_i32_a equ $ - gen_i32_a
+    gen_i32_b:
+    db "    add rsp, 48", 10
+    db "    pop r8", 10
+    db "    pop rdi", 10
+    db "    pop rsi", 10
+    db "    pop rdx", 10
+    db "    pop rcx", 10
+    db "    pop rbx", 10
+    db "    ret", 10
+    len_gen_i32_b equ $ - gen_i32_b
+
+    ; str: rax holds the address of the text, which ends at a zero byte (a str name holds that address)
+    gen_str_a:
+    db 10
+    db "; ---- gen: print a str (rax = address of zero-ended text) ----", 10
+    db "dhar$gen$str:", 10
+    db "    push rcx", 10
+    db "    push rdx", 10
+    db "    push rsi", 10
+    db "    push rdi", 10
+    db "    mov rsi, rax", 10
+    db "    xor edx, edx", 10
+    db "    test rsi, rsi", 10
+    db "    jz .done", 10
+    db ".count:", 10
+    db "    cmp byte [rsi + rdx], 0", 10
+    db "    je .write", 10
+    db "    inc rdx", 10
+    db "    jmp .count", 10
+    db ".write:", 10
+    db "    test rdx, rdx", 10
+    db "    jz .done", 10
+    db "    mov rax, 1", 10
+    db "    mov rdi, 1", 10
+    len_gen_str_a equ $ - gen_str_a
+    gen_str_b:
+    db ".done:", 10
+    db "    pop rdi", 10
+    db "    pop rsi", 10
+    db "    pop rdx", 10
+    db "    pop rcx", 10
+    db "    ret", 10
+    len_gen_str_b equ $ - gen_str_b
+
+    ; bool: rax is zero for false, anything else for true
+    gen_bool_a:
+    db 10
+    db "; ---- gen: print a bool (rax) ----", 10
+    db "dhar$gen$bool:", 10
+    db "    push rcx", 10
+    db "    push rdx", 10
+    db "    push rsi", 10
+    db "    push rdi", 10
+    db "    mov rsi, dhar$gen$false", 10
+    db "    mov edx, 5", 10
+    db "    test rax, rax", 10
+    db "    jz .write", 10
+    db "    mov rsi, dhar$gen$true", 10
+    db "    mov edx, 4", 10
+    db ".write:", 10
+    db "    mov rax, 1", 10
+    db "    mov rdi, 1", 10
+    len_gen_bool_a equ $ - gen_bool_a
+    gen_bool_b:
+    db "    pop rdi", 10
+    db "    pop rsi", 10
+    db "    pop rdx", 10
+    db "    pop rcx", 10
+    db "    ret", 10
+    db "section .data", 10
+    db "dhar$gen$true db ", 96, "true", 96, 10
+    db "dhar$gen$false db ", 96, "false", 96, 10
+    len_gen_bool_b equ $ - gen_bool_b
+
     ; --- V0.3.0 Strength-reduction folds ---
     asm_inc db "    inc qword ["
     len_asm_inc equ $ - asm_inc
@@ -504,6 +637,9 @@ section .bss
     cur_text_len resq 1
     target_os_flag resq 1           ; 0 = Linux, 1 = Windows PE, 2 = WASI
     last_token_type resb 1          ; V0.3.0 unary-minus detection
+    bool_lit_flag resb 1            ; Phase 3: the word being stored is true/false (a bool literal)
+    gen_need resb 1                 ; Phase 3: bit 0 i32, bit 1 str, bit 2 bool helper needed at the end
+    gen_cur_type resb 1             ; Phase 3: type code of the value gen() is printing (1 i32, 2 str, 14 bool)
 
     ; --- V0.3.0 Stack-frame machinery ---
     frame_offsets resq 256          ; per-task frame sizes (bytes), 1-indexed

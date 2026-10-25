@@ -445,9 +445,76 @@ run_parser:
     mov rdx, len_err_syntax
     jmp .print_syntax_err
 .check_gen_stmt:
-    ; gen("string") or gen(expr) - consume opening paren, string/expr, closing paren
+    ; Phase 3: gen ( VALUE ), all on one line, nothing after it. VALUE is a string literal, a number,
+    ; true or false, or the name of a declared i32, str or bool (a task, buffer or array has no text
+    ; form). Before this, any three tokens after `gen` were skipped unchecked, so gen(5) and gen(name)
+    ; produced assembly that did not assemble.
+    ; Accounting: park rcx on ')' (net 4 tokens); .next_token supplies the last step.
+    mov rax, 1
+    call gen_peek                   ; '('
+    test eax, eax
+    jz .err_gen
+    cmp byte [r12], 3
+    jne .err_gen
+    cmp byte [r12 + 1], 2
+    jne .err_gen
+    mov rax, 2
+    call gen_peek                   ; the value
+    test eax, eax
+    jz .err_gen
+    cmp byte [r12], 6               ; string literal
+    je .gen_value_ok
+    cmp byte [r12], 5               ; number, or true/false (a unary minus is part of the number token)
+    je .gen_value_ok
+    cmp byte [r12], 2               ; a name
+    jne .err_gen
+    mov rdi, [r12 + 8]
+    call find_symbol_scoped         ; rax = 1 and rdx = symbol; preserves rbx, rcx, r9 to r12
+    cmp rax, 1
+    jne .err_undeclared
+    movzx eax, byte [rdx + 8]       ; kind: 1 lock, 2 flux, 5 parameter print; tasks and arrays do not
+    cmp eax, 1
+    je .gen_kind_ok
+    cmp eax, 2
+    je .gen_kind_ok
+    cmp eax, 5
+    jne .err_gen_type
+.gen_kind_ok:
+    movzx eax, byte [rdx + 9]       ; type code, bit 7 is the "lives on the stack" flag
+    and eax, 0x7F
+    cmp eax, 1                      ; i32
+    je .gen_value_ok
+    cmp eax, 2                      ; str
+    je .gen_value_ok
+    cmp eax, 14                     ; bool
+    jne .err_gen_type
+.gen_value_ok:
+    mov rax, 3
+    call gen_peek                   ; ')'
+    test eax, eax
+    jz .err_gen
+    cmp byte [r12], 3
+    jne .err_gen
+    cmp byte [r12 + 1], 3
+    jne .err_gen
+    mov rax, 4
+    call gen_peek                   ; nothing else may follow on the line
+    test eax, eax
+    jnz .err_gen
     add rcx, 3
     jmp .next_token
+.err_gen:
+    mov rsi, msg_err_gen
+    mov rdx, len_err_gen
+    jmp .print_syntax_err
+.err_global_init:
+    mov rsi, msg_err_global_init
+    mov rdx, len_err_global_init
+    jmp .print_syntax_err
+.err_gen_type:
+    mov rsi, msg_err_gen_type
+    mov rdx, len_err_gen_type
+    jmp .print_sem_err
 .check_shift_stmt:
     ; Phase 1.6: shift <ident> <cmp-op> <value> ':' — else-if, may repeat.
     ; Same shape as when, plus chain validation: pop deeper blocks, then
@@ -1303,6 +1370,8 @@ run_parser:
     lea r12, [token_array + rax]
     cmp byte [r12], 3                       
     jne .err_var_colon
+    cmp byte [r12 + 1], 4           ; '=' : the type is inferred from the value (Spec1 4.3)
+    je .var_infer
     cmp byte [r12 + 1], 1                       
     jne .err_var_colon
 
@@ -1368,6 +1437,64 @@ run_parser:
     add r11b, 10                    
     add rdi, 3                      
 
+    jmp .check_inline_assign
+
+.var_infer:
+    ; Phase 3: lock|flux NAME = VALUE, with no type written. As Spec1 4.3 says: a whole number is i32,
+    ; true/false is bool, "text" is str, and a name takes the type of the name it copies. The value
+    ; must be on the same line. The result then goes through the same checks as a typed declaration.
+    ; Layout: kw NAME '=' VALUE, so the '=' is rdi + 1 tokens on with rdi = 1.
+    mov rax, rcx
+    add rax, 3
+    cmp rax, [token_count]
+    jge .err_assign_val
+    shl rax, 4
+    lea r12, [token_array + rax]
+    mov edx, [rbx + 4]
+    cmp edx, [r12 + 4]
+    jne .err_assign_val
+    cmp byte [r12], 5
+    je .infer_number
+    cmp byte [r12], 6
+    je .infer_str
+    cmp byte [r12], 2
+    jne .err_assign_val
+    mov rdi, [r12 + 8]              ; copies a name: look it up BEFORE the new name exists
+    call find_symbol_scoped
+    cmp rax, 1
+    jne .err_undeclared
+    movzx eax, byte [rdx + 8]
+    cmp eax, 1
+    je .infer_name_kind_ok
+    cmp eax, 2
+    je .infer_name_kind_ok
+    cmp eax, 5
+    jne .err_expr                   ; a task or an array has no single value to copy
+.infer_name_kind_ok:
+    movzx r9d, byte [rdx + 9]
+    and r9d, 0x7F
+    cmp r9d, 1
+    je .var_infer_done
+    cmp r9d, 2
+    je .var_infer_done
+    cmp r9d, 14
+    je .var_infer_done
+    jmp .err_expr
+.infer_number:
+    mov r9d, 1                      ; i32
+    cmp byte [r12 + 1], 1           ; written true/false
+    jne .var_infer_done
+    mov r9d, 14                     ; bool
+    jmp .var_infer_done
+.infer_str:
+    mov r9d, 2                      ; str
+.var_infer_done:
+    mov r14d, [rbx + 4]
+    mov r15w, [rbx + 2]
+    mov rdi, 1
+    xor r10, r10                    ; not an array
+    jmp .check_inline_assign
+
 .check_inline_assign:
     mov rax, rcx
     add rax, rdi
@@ -1381,6 +1508,10 @@ run_parser:
     jne .finish_var_decl
     cmp byte [r12 + 1], 4           
     jne .finish_var_decl
+    ; Phase 3: a starting value on a name declared outside any task (indent 0) used to be emitted as
+    ; dead code after the program's exit, so the name silently stayed 0. Say so instead.
+    cmp word [rbx + 2], 0
+    je .err_global_init
     
     mov rax, rcx
     add rax, rdi
