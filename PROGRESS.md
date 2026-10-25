@@ -19,7 +19,7 @@ Never copy status into the Canon, and never copy a design promise into this file
 | Area | Status | What it means today |
 | --- | --- | --- |
 | Stage 0 compiler | **Works** | `dharc` is written in NASM x86-64 assembly (nine modules, no libc). It reads a `.dhar` file and writes assembly; `nasm` and a linker turn that into a program. The conformance battery has 106 tests and all of them pass on both targets. |
-| Native programs, no runtime | **Works** | Output is a small static program that talks to the operating system directly through `sys`. The examples below are about 9 KB each. |
+| Native programs, no runtime | **Works** | Output is a small static program that talks to the operating system directly: `gen` and `sys` both end in a system call, with no library between. The examples below are about 9 KB each. |
 | Bounds checking on buffers | **Works** | An index outside a `raw[N]` buffer stops the program with `Dhar: index out of bounds` and exit status 1, instead of silently corrupting memory. |
 | The language itself | **Partly** | A strict first subset: `i32`, `str`, `bool` and `raw[N]`; type inference from the first value (`lock x = 5`); tasks with parameters; `give` with a value or one operation (`give a + b`); `gen(...)` to print a string, a number or an `i32`, `str` or `bool` variable; `when`/`shift`/`fallback`; loops; `sys` calls; layout-only `mold`. Anything outside the subset is rejected with a clear message. Known limit: a global variable cannot have an initial value yet (assign it inside a task); the compiler says so instead of silently ignoring it. |
 | Target: Linux x86-64 | **Works** | Programs are built, linked and run natively in the tests. |
@@ -33,7 +33,7 @@ Never copy status into the Canon, and never copy a design promise into this file
 | Modules, standard library, `Kun` | **Not yet** | `pull` and `expose` are validated but link a single file. There is no importer, no standard library and no package manager yet; programs call the system directly. |
 | Try Dhar in the browser | **Not yet** | Planned for this website. It needs a way to run `dharc` and the result in the browser, and nothing of that exists yet. |
 
-Status checked 25 October 2026 against commit `65b5d75`. Words: **Works** = runs and is tested; **Partly** = some of it runs and is tested; **Designed** = specified or scaffolded, not working; **Not yet** = nothing exists. Generated from `status/status.json` (see HONESTY.md in the Dhar-website-and-docs repository).
+Status checked 25 October 2026 against commit `b4bfb21`. Words: **Works** = runs and is tested; **Partly** = some of it runs and is tested; **Designed** = specified or scaffolded, not working; **Not yet** = nothing exists. Generated from `status/status.json` (see HONESTY.md in the Dhar-website-and-docs repository).
 <!-- gen:status:end -->
 
 ### How to say it in public

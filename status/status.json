@@ -22,7 +22,7 @@
     },
     {
       "id": "native", "status": "works", "title": "Native programs, no runtime",
-      "text": "Output is a small static program that talks to the operating system directly through `sys`. The examples below are about 9 KB each."
+      "text": "Output is a small static program that talks to the operating system directly: `gen` and `sys` both end in a system call, with no library between. The examples below are about 9 KB each."
     },
     {
       "id": "bounds", "status": "works", "title": "Bounds checking on buffers",
