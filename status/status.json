@@ -1,7 +1,7 @@
 {
   "_about": "THE single source of truth for what Dhar can do today. Edit this file, run `python3 status/render.py`, commit the result. The website board, the README status block, the speed tables and the progress log are generated from it (and from benchmarks/results/*.json), and tests/test_status.py fails if any of them has drifted or if a claim here no longer matches the code. Text fields use `backticks` for code. Statuses: works | partly | designed | notyet. See docs/HONESTY.md for what each word means.",
 
-  "as_of": "2026-10-25",
+  "as_of": "2026-10-29",
 
   "repos": {
     "forge_of_dhar": { "name": "forge-of-dhar", "role": "Stage 0", "url": "https://github.com/garba-the-analyst/forge-of-dhar" },
@@ -41,8 +41,8 @@
       "text": "Programs assemble as win64, link into a PE, and run correctly in a CPU emulator that checks the Windows calling rules; all {battery_total} tests pass there. It has not been run on a real Windows machine yet, and `dharc` itself still runs only on Linux (on Windows, use WSL)."
     },
     {
-      "id": "targets_other", "status": "notyet", "title": "Targets: ARM64, RISC-V, WebAssembly (WASI)",
-      "text": "`dharc` refuses these with an error rather than producing the wrong output. The author decided on 23 October 2026 to build them in Stage 0 itself (not postpone them to Stage 1); nothing of that is built yet, and each target is switched on only when the whole test battery passes on it. The Canon still says Stage 0 targets x86-64 only, so the decision needs Canon amendment A-2."
+      "id": "targets_other", "status": "notyet", "title": "Targets: Linux ARM64, Linux RISC-V 64, WebAssembly (WASI), macOS",
+      "text": "`dharc` refuses these with an error rather than producing the wrong output. The author decided on 23 October 2026 to build them in Stage 0 itself (not postpone them to Stage 1), and on 25 October extended that to every processor and operating system the Canon names. That decision is now in the Canon as Amendment A-2, which lists the committed targets in one place. Nothing of it is built yet: each target is switched on only when the whole test battery passes on it in an emulator (gate G0), and counts as complete only when it passes on a real system (gate G1)."
     },
     {
       "id": "stage1", "status": "designed", "title": "Stage 1: the compiler written in Dhar",
@@ -54,7 +54,7 @@
     },
     {
       "id": "direction", "status": "designed", "title": "Cybersecurity, AI and quantum direction",
-      "text": "The direction and its acceptance gates are written down as Canon Amendment A-1, a draft that still needs the author's ratification. Nothing for them is built yet: no `std.crypto`, no float or tensor types, no quantum back end."
+      "text": "The direction and its acceptance gates are written down as Canon Amendment A-1, ratified on the author's instruction of 25 October and issued on 26 October 2026; every Canon document now carries it. Nothing for them is built yet: no `std.crypto`, no float or tensor types, no quantum back end."
     },
     {
       "id": "selfhost", "status": "notyet", "title": "Self-hosting",
@@ -69,8 +69,8 @@
       "text": "`pull` and `expose` are validated but link a single file. There is no importer, no standard library and no package manager yet; programs call the system directly."
     },
     {
-      "id": "playground", "status": "notyet", "title": "Try Dhar in the browser",
-      "text": "Planned for this website. It needs a way to run `dharc` and the result in the browser, and nothing of that exists yet."
+      "id": "playground", "status": "designed", "title": "Try Dhar in the browser",
+      "text": "Specified in Tooling Dhar §5, a Canon document that is proposed and not yet ratified: the first version compiles a visitor's program on a sandboxed service that keeps nothing, and runs the result in the visitor's browser; a later version runs the compiler in the page. It needs the WebAssembly target, which is not built, so nothing of the playground exists yet."
     }
   ],
 
@@ -85,12 +85,14 @@
   "backends": [
     { "name": "x86-64 Linux",   "status": "works" },
     { "name": "x86-64 Windows", "status": "partly" },
-    { "name": "ARM64",          "status": "designed" },
-    { "name": "RISC-V",         "status": "designed" },
-    { "name": "WebAssembly",    "status": "designed" }
+    { "name": "ARM64 Linux",    "status": "designed" },
+    { "name": "RISC-V 64 Linux", "status": "designed" },
+    { "name": "WebAssembly",    "status": "designed" },
+    { "name": "macOS x86-64",   "status": "designed" },
+    { "name": "macOS ARM64",    "status": "designed" }
   ],
 
-  "tracks_intro": "Security first, then AI, then quantum. None of this is built. It starts after Stage 1 compiles itself; until then the work is to leave room for it in the design. Each line below is a gate: a test that must pass before the line is called done.",
+  "tracks_intro": "Security first, then AI, then quantum. None of this is built. It starts after Stage 1 compiles itself; until then the work is to leave room for it in the design. Each line below is a gate: a test that must pass before the line is called done. Web, backend, data, blockchain and the other domains stay, as modules on the same core.",
 
   "tracks": [
     {
@@ -126,6 +128,7 @@
   ],
 
   "milestones": [
+    { "date": "2026-10-29", "title": "Canon amended: direction and targets in every document", "text": "Between 25 and 29 October all fifteen Canon documents were amended for Amendment A-1 (security, then AI, then quantum; breadth kept as modules) and Amendment A-2 (every processor and operating system in Stage 0, with the gates G0 and G1). A new document, Tooling Dhar, specifies the diagnostics, the editor server and the in-browser playground; it is Proposed, not ratified. The documents are built as PDFs in the website's colours from Markdown sources in the Dhar-website-and-docs repository. The Hallmark gains a section on personal data under the Nigeria Data Protection Act, which says that counsel qualified in Nigerian law must review it before any data is collected. No compiler change in this period: {battery_total} tests, unchanged." },
     { "date": "2026-10-25", "title": "Website, survey and Canon moved to their own repository", "text": "The website, the survey (now a page of the website, at /survey/), the Canon documents and the progress reports live in one branch of the Dhar-website-and-docs repository, served from Render at https://dhar.onrender.com instead of GitHub Pages. This replaces the GitHub Pages step in Progress Report 001. The survey saves answers in a Supabase database; its table rules were checked on PostgreSQL (36 checks) and the page against an imitation of the service, but not yet against the live project." },
     { "date": "2026-10-25", "title": "Buffer address in `scan` fixed", "text": "Checking the Stage 1 sources against the compiler turned up a wrong stack offset: for `scan` over a local buffer the compiler wrote the buffer's address as `rbp-4294967336` instead of `rbp-40`. `nasm` warned and cut the number down to the right value, so programs printed the right answer and nothing visibly failed. The compiler now writes the right offset; two new tests check the output and the assembly text, and the assembly test fails on the previous compiler. {battery_total} tests pass on both targets." },
     { "date": "2026-10-24", "title": "`gen(...)` is the print function", "text": "Printing no longer needs a buffer and a raw system call: `gen(\"text\")`, `gen(42)` and `gen(name)` write a string, a number or a variable, for variables declared with a type and for ones whose type was inferred (`lock x = 5`). `gen` is strict: parentheses, exactly one argument, and a name that is an `i32`, `str` or `bool`. While testing it, a global `flux g: i32 = 77` turned out to be silently ignored (the variable stayed 0); the compiler now rejects it with a message, and it is listed as a limit, not fixed. {battery_total} tests pass on both targets; the new tests fail on the previous compiler." },
